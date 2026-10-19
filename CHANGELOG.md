@@ -2,6 +2,23 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-0-2-0"></a>
+
+## 0.2.0 (2026-10-19)
+
+<a name="release-0-2-0-added"></a>
+
+### Added
+
+- Support Towncrier fragment directories outside the repository root during version selection and PR linking.
+  (fragment-directory)
+
+<a name="release-0-2-0-documentation"></a>
+
+### Documentation
+
+- Put the Action setup and input reference in the repository README, with examples for each step. (readme)
+
 <a name="release-0-1-0"></a>
 
 ## 0.1.0 (2026-10-19)
