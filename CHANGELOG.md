@@ -11,13 +11,14 @@
 ### Added
 
 - Support Towncrier fragment directories outside the repository root during version selection and PR linking.
-  (fragment-directory)
+  ([#2](https://github.com/tox-dev/github-workflows/pull/2)) by [@gaborbernat](https://github.com/gaborbernat).
 
 <a name="release-0-2-0-documentation"></a>
 
 ### Documentation
 
-- Put the Action setup and input reference in the repository README, with examples for each step. (readme)
+- Put the Action setup and input reference in the repository README, with examples for each step
+  ([#2](https://github.com/tox-dev/github-workflows/pull/2)) by [@gaborbernat](https://github.com/gaborbernat).
 
 <a name="release-0-1-0"></a>
 

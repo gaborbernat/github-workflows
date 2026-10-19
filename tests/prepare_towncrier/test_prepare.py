@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from datetime import date
+from textwrap import dedent
 lazy from pathlib import Path
 
 import pytest
@@ -43,7 +44,7 @@ def test_prepare_custom_fragment_directory(repository: Path, tmp_path: Path, act
     (repository / "docs").mkdir()
     (repository / "changelog.d").rename(repository / "docs/changelog.d")
     run(repository, "git", "add", "-A")
-    run(repository, "git", "commit", "-m", "Move release fragments")
+    run(repository, "git", "commit", "-m", "Move release fragments (#2)")
     run(repository, "git", "push", "origin", "main")
     result = action(
         repository,
@@ -53,15 +54,28 @@ def test_prepare_custom_fragment_directory(repository: Path, tmp_path: Path, act
         version="",
         FRAGMENTS="docs/changelog.d",
         LINK_FRAGMENTS="true",
+        GITHUB_REPOSITORY="tox-dev/github-workflows",
     )
     assert result.returncode == 0, result.stderr
     assert "version=0.2.0" in (tmp_path / "output").read_text()
-    assert "Add a new feature." in (repository / "CHANGELOG.md").read_text()
-    assert "docs/changelog.d/feature.feature.md" in (tmp_path / "release.patch").read_text()
+    assert (
+        "Add a new feature ([#2](https://github.com/tox-dev/github-workflows/pull/2)) "
+        "by [@gaborbernat](https://github.com/gaborbernat)."
+    ) in (repository / "CHANGELOG.md").read_text()
+    assert "docs/changelog.d/+feature.feature.md" in (tmp_path / "release.patch").read_text()
 
 
 def test_prepare_renders_github_notes(repository: Path, tmp_path: Path, action_scripts: Path) -> None:
-    assert action(repository, tmp_path, action_scripts, "prepare-towncrier", version="0.2.0").returncode == 0
+    result = action(
+        repository,
+        tmp_path,
+        action_scripts,
+        "prepare-towncrier",
+        version="0.2.0",
+        LINK_FRAGMENTS="true",
+        GITHUB_REPOSITORY="tox-dev/github-workflows",
+    )
+    assert result.returncode == 0, result.stderr
     result = run(
         repository,
         "release-creator",
@@ -71,9 +85,21 @@ def test_prepare_renders_github_notes(repository: Path, tmp_path: Path, action_s
         "--tag",
         "0.2.0",
         "--repository",
-        "tox-dev/fixture",
+        "tox-dev/github-workflows",
+        "--previous",
+        "0.1.0",
     )
-    assert "### Features" in result.stdout
+    assert result.stdout == dedent(
+        """\
+        <a name="release-0-2-0-added"></a>
+
+        ### Features
+
+        - Add a new feature ([#2](https://github.com/tox-dev/github-workflows/pull/2)) by @gaborbernat.
+
+        **Full Changelog**: https://github.com/tox-dev/github-workflows/compare/0.1.0...0.2.0
+        """,
+    )
 
 
 def test_prepare_rejects_dirty_checkout(repository: Path, tmp_path: Path, action_scripts: Path) -> None:
@@ -149,9 +175,26 @@ def test_prepare_links_named_fragments(repository: Path, tmp_path: Path, action_
         "prepare-towncrier",
         version="0.2.0",
         LINK_FRAGMENTS="true",
+        GITHUB_REPOSITORY="tox-dev/github-workflows",
     )
     assert result.returncode == 0, result.stderr
-    assert "Add a new feature." in (repository / "CHANGELOG.md").read_text()
+    assert (
+        "Add a new feature ([#2](https://github.com/tox-dev/github-workflows/pull/2)) "
+        "by [@gaborbernat](https://github.com/gaborbernat)."
+    ) in (repository / "CHANGELOG.md").read_text()
+
+
+@pytest.mark.parametrize("version", [pytest.param("", id="automatic"), pytest.param("0.2.0", id="explicit")])
+def test_prepare_rejects_unlinked_fragment_name(
+    repository: Path, tmp_path: Path, action_scripts: Path, version: str
+) -> None:
+    run(repository, "git", "mv", "changelog.d/+feature.feature.md", "changelog.d/feature.feature.md")
+    run(repository, "git", "commit", "-m", "Use a bare fragment name")
+    run(repository, "git", "push", "origin", "main")
+    result = action(repository, tmp_path, action_scripts, "prepare-towncrier", version=version, LINK_FRAGMENTS="true")
+    assert result.returncode != 0
+    assert "unsupported changelog fragment name" in result.stderr
+    assert not (tmp_path / "release.patch").exists()
 
 
 def test_prepare_rejects_untracked_output(repository: Path, tmp_path: Path, action_scripts: Path) -> None:
@@ -169,7 +212,7 @@ def test_prepare_rejects_untracked_output(repository: Path, tmp_path: Path, acti
 
 
 def test_prepare_rejects_empty_release(repository: Path, tmp_path: Path, action_scripts: Path) -> None:
-    (repository / "changelog.d/feature.feature.md").unlink()
+    (repository / "changelog.d/+feature.feature.md").unlink()
     run(repository, "git", "add", "-u")
     run(repository, "git", "commit", "-m", "Remove unused fragment")
     run(repository, "git", "push", "origin", "main")
@@ -207,7 +250,7 @@ def test_prepare_formats_markdown(repository: Path, tmp_path: Path, action_scrip
         "        name: mdformat\n        entry: mdformat --wrap 120\n"
         "        language: system\n        types: [markdown]\n",
     )
-    (repository / "changelog.d/feature.feature.md").write_text("Add " + "a long sentence " * 15 + ".\n")
+    (repository / "changelog.d/+feature.feature.md").write_text("Add " + "a long sentence " * 15 + ".\n")
     run(repository, "git", "add", ".")
     run(repository, "git", "commit", "-m", "Set markdown hook")
     run(repository, "git", "push", "origin", "main")

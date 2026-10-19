@@ -50,9 +50,9 @@ def repository(tmp_path: Path) -> Path:
     run(worktree, "git", "add", ".")
     run(worktree, "git", "commit", "-m", "Initial files")
     run(worktree, "git", "tag", "0.1.0")
-    (worktree / "changelog.d/feature.feature.md").write_text("Add a new feature.\n")
+    (worktree / "changelog.d/+feature.feature.md").write_text("Add a new feature.\n")
     run(worktree, "git", "add", ".")
-    run(worktree, "git", "commit", "-m", "Add feature")
+    run(worktree, "git", "commit", "-m", "Add feature (#2)")
     run(worktree, "git", "push", "-u", "origin", "main", "--tags")
     return worktree
 
