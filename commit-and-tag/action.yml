@@ -1,0 +1,64 @@
+name: Commit and tag release
+description: Commit a validated release patch and atomically push its tag
+inputs:
+  version:
+    description: Release version and tag
+    required: true
+  token:
+    description: Repository-scoped GitHub App installation token
+    required: true
+  app-slug:
+    description: GitHub App slug returned by create-github-app-token
+    required: true
+  message:
+    description: Release commit message
+    required: true
+  branch:
+    description: Protected release branch
+    default: main
+  annotated:
+    description: Create an annotated tag
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: Check staged release
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        ANNOTATED: ${{ inputs.annotated }}
+      run: |
+        set -euo pipefail
+        if git diff --cached --quiet || ! git diff --quiet || [[ -n $(git ls-files --others --exclude-standard) ]]; then
+          echo '::error::expected only a staged release patch' >&2
+          exit 1
+        fi
+        if [[ "$ANNOTATED" != true && "$ANNOTATED" != false ]]; then
+          echo '::error::annotated must be true or false' >&2
+          exit 1
+        fi
+        if ! git check-ref-format "refs/tags/$VERSION"; then
+          echo "::error::invalid release tag: $VERSION" >&2
+          exit 1
+        fi
+    - name: Commit, tag, and push
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        GH_TOKEN: ${{ inputs.token }}
+        APP_SLUG: ${{ inputs.app-slug }}
+        MESSAGE: ${{ inputs.message }}
+        BRANCH: ${{ inputs.branch }}
+        ANNOTATED: ${{ inputs.annotated }}
+      run: |
+        set -euo pipefail
+        app_user_id=$(gh api "/users/${APP_SLUG}[bot]" --jq .id)
+        git config user.name "${APP_SLUG}[bot]"
+        git config user.email "${app_user_id}+${APP_SLUG}[bot]@users.noreply.github.com"
+        git commit -m "$MESSAGE"
+        case "$ANNOTATED" in
+        true) git tag -a -m "$MESSAGE" -- "$VERSION" ;;
+        false) git tag -- "$VERSION" ;;
+        esac
+        gh auth setup-git --hostname github.com --force
+        git push --atomic origin "HEAD:$BRANCH" "refs/tags/$VERSION"
