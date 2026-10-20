@@ -99,10 +99,27 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+  release-tools-preview:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.15"
+          enable-cache: false
+      - uses: $/refresh-release-lock
+        with:
+          groups: release
+          python-version: "3.15"
   gate:
     name: Required checks pass
     if: always()
-    needs: [check, changelog, release-dry-run]
+    needs: [check, changelog, release-dry-run, release-tools-preview]
     runs-on: ubuntu-26.04
     steps:
       - env:
@@ -113,6 +130,7 @@ jobs:
               to_entries[];
               .value.result == "success" or
               (.key == "changelog" and .value.result == "skipped") or
-              (.key == "release-dry-run" and .value.result == "skipped")
+              (.key == "release-dry-run" and .value.result == "skipped") or
+              (.key == "release-tools-preview" and .value.result == "skipped")
             )
           ' <<<"$NEEDS_JSON"

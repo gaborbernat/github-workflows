@@ -1,0 +1,80 @@
+name: Refresh a release-tool lock
+description: Compile and check a local release-tool lock without GitHub writes
+inputs:
+  lock:
+    description: Path to the checked-in pylock file
+    default: pylock.toml
+  groups:
+    description: Comma-separated pyproject dependency groups to refresh
+    default: release
+  python-version:
+    description: Python version used to resolve and check the lock
+    default: "3.15"
+outputs:
+  changed:
+    description: Whether the lock differs from the checkout
+    value: ${{ steps.lock.outputs.changed }}
+runs:
+  using: composite
+  steps:
+    - name: Refresh release tool lock
+      shell: bash
+      env:
+        LOCK: ${{ inputs.lock }}
+        DEP_GROUPS: ${{ inputs.groups }}
+        PYTHON_VERSION: ${{ inputs.python-version }}
+      run: |
+        set -euo pipefail
+        read -ra groups <<<"${DEP_GROUPS//,/ }"
+        args=()
+        has_release=false
+        for group in "${groups[@]}"; do
+          case "$group" in
+          '' | [!a-zA-Z]* | *[!a-zA-Z0-9_-]*)
+            echo "::error::invalid dependency group: $group" >&2
+            exit 1
+            ;;
+          esac
+          if [[ "$group" == release ]]; then
+            has_release=true
+          fi
+          args+=(--group "pyproject.toml:$group")
+        done
+        if [[ "$has_release" != true ]]; then
+          echo '::error::release dependency group is required' >&2
+          exit 1
+        fi
+        uv pip compile --preview-features pylock "${args[@]}" --universal \
+          --python-version "$PYTHON_VERSION" --generate-hashes --upgrade \
+          --output-file "$LOCK"
+    - name: Check refreshed lock
+      shell: bash
+      env:
+        LOCK: ${{ inputs.lock }}
+        PYTHON_VERSION: ${{ inputs.python-version }}
+      run: |
+        set -euo pipefail
+        uv venv --python "$PYTHON_VERSION" "$RUNNER_TEMP/release-tools"
+        uv pip sync --preview-features pylock --python "$RUNNER_TEMP/release-tools/bin/python" \
+          --group release "$LOCK"
+        "$RUNNER_TEMP/release-tools/bin/prek" run --all-files
+        while IFS= read -r entry; do
+          path=${entry:3}
+          if [[ "$path" != "$LOCK" ]]; then
+            echo "::error::prek changed file outside $LOCK: $path" >&2
+            exit 1
+          fi
+        done < <(git status --porcelain=v1 --untracked-files=all)
+    - id: lock
+      shell: bash
+      env:
+        LOCK: ${{ inputs.lock }}
+      run: |
+        set -euo pipefail
+        if git diff --quiet -- "$LOCK"; then
+          echo 'changed=false' >>"$GITHUB_OUTPUT"
+          exit 0
+        fi
+        echo 'changed=true' >>"$GITHUB_OUTPUT"
+        git diff --binary -- "$LOCK" >"$RUNNER_TEMP/lock.patch"
+        test -s "$RUNNER_TEMP/lock.patch"

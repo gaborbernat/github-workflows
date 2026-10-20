@@ -89,6 +89,36 @@ defaults to `pylock.toml`; `base` defaults to `main`; `branch` defaults to `auto
 repositories can use different upgrade days without copying the jobs. `commit-message`, `pull-request-title`, and
 `pull-request-body` let a caller retain its existing dependency PR wording.
 
+To check the same lock refresh on a PR, call `refresh-release-lock` in a job with Contents read permission. The reusable
+updater calls this Action in its generator job. It reads dependency groups from `pyproject.toml`, rewrites the local
+lock, installs its `release` group, and runs `prek`. It fails if `prek` changes another file. Its `changed` output is
+`true` only when the compiled lock differs from the checkout; in that case it writes `$RUNNER_TEMP/lock.patch`. The
+Action does not push a branch, open a PR, or request a write token.
+
+```yaml
+release-tools-preview:
+  if: github.event_name == 'pull_request'
+  runs-on: ubuntu-26.04
+  permissions:
+    contents: read
+  steps:
+    - uses: actions/checkout@CHECKOUT_SHA
+      with:
+        persist-credentials: false
+    - uses: astral-sh/setup-uv@SETUP_UV_SHA
+      with:
+        python-version: "3.15"
+    - id: lock
+      uses: tox-dev/github-workflows/refresh-release-lock@SHA
+      with:
+        groups: release
+        python-version: "3.15"
+```
+
+The caller must check out the PR head and install uv before the Action. The preview exercises compilation and hooks; the
+scheduled updater still owns the PR write path. A reusable workflow containing a write job cannot be called with
+read-only permissions even when that job would skip, so use the composite Action for PR checks.
+
 ## Start with a caller
 
 The [release preparation workflow](.github/workflows/prepare-release.yaml) in this repository is a complete caller. Its
