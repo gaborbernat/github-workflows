@@ -1,0 +1,50 @@
+name: Label bot pull request news
+description: Keep skip news on bot PRs without a changelog fragment
+inputs:
+  fragments:
+    description: Directory containing changelog fragments
+    default: changelog.d
+  extension:
+    description: Fragment extension without the dot, either md or rst
+    default: md
+runs:
+  using: composite
+  steps:
+    - name: Set skip news for a bot PR
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REPOSITORY: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        BOT_AUTHOR: ${{ github.event.pull_request.user.type == 'Bot' }}
+        FRAGMENTS: ${{ inputs.fragments }}
+        EXTENSION: ${{ inputs.extension }}
+      run: |
+        set -euo pipefail
+        if [[ "$BOT_AUTHOR" != true ]]; then
+          exit 0
+        fi
+        if [[ "$EXTENSION" != md && "$EXTENSION" != rst ]]; then
+          echo '::error::fragment extension must be md or rst' >&2
+          exit 1
+        fi
+        gh api --paginate "repos/$REPOSITORY/pulls/$PR_NUMBER/files" --jq '.[].filename' >"$RUNNER_TEMP/bot-pr-files"
+        has_fragment=false
+        while IFS= read -r path; do
+          case "$path" in
+          "$FRAGMENTS"/*.*."$EXTENSION")
+            has_fragment=true
+            break
+            ;;
+          esac
+        done <"$RUNNER_TEMP/bot-pr-files"
+        gh api "repos/$REPOSITORY/issues/$PR_NUMBER/labels" --jq '.[].name' >"$RUNNER_TEMP/bot-pr-labels"
+        has_label=false
+        if grep -Fxq 'skip news' "$RUNNER_TEMP/bot-pr-labels"; then
+          has_label=true
+        fi
+        if [[ "$has_fragment" == false && "$has_label" == false ]]; then
+          gh api -X POST "repos/$REPOSITORY/issues/$PR_NUMBER/labels" -f 'labels[]=skip news' >/dev/null
+        elif [[ "$has_fragment" == true && "$has_label" == true ]]; then
+          gh api -X DELETE "repos/$REPOSITORY/issues/$PR_NUMBER/labels/skip%20news" >/dev/null
+        fi

@@ -1,0 +1,111 @@
+from __future__ import annotations
+
+import ssl
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
+import trustme
+from conftest import action
+from pytest_httpserver import HTTPServer
+
+
+@pytest.fixture
+def github_api(tmp_path: Path) -> Iterator[tuple[HTTPServer, dict[str, str]]]:
+    authority = trustme.CA()
+    certificate = authority.issue_cert("localhost")
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    certificate.configure_cert(context)
+    server = HTTPServer(host="localhost", ssl_context=context)
+    server.start()
+    bundle = tmp_path / "ca.pem"
+    authority.cert_pem.write_to_path(bundle)
+    yield (
+        server,
+        {
+            "GH_HOST": f"localhost:{server.port}",
+            "GH_ENTERPRISE_TOKEN": "test-token",
+            "SSL_CERT_FILE": str(bundle),
+            "NO_PROXY": "localhost,127.0.0.1",
+        },
+    )
+    server.stop()
+
+
+@pytest.mark.parametrize(
+    ("files", "labels", "write_method"),
+    [
+        pytest.param([], [], "POST", id="add"),
+        pytest.param([], [{"name": "skip news"}], None, id="already-labeled"),
+        pytest.param([{"filename": "changelog.d/+fix.bugfix.md"}], [{"name": "skip news"}], "DELETE", id="remove"),
+        pytest.param([{"filename": "changelog.d/+fix.bugfix.md"}], [], None, id="fragment-without-label"),
+    ],
+)
+def test_label_bot_news_updates_label(
+    repository: Path,
+    tmp_path: Path,
+    action_scripts: Path,
+    github_api: tuple[HTTPServer, dict[str, str]],
+    files: list[dict[str, str]],
+    labels: list[dict[str, str]],
+    write_method: str | None,
+) -> None:
+    server, environment = github_api
+    prefix = "/api/v3/repos/tox-dev/fixture"
+    server.expect_request(f"{prefix}/pulls/1/files", method="GET").respond_with_json(files)
+    server.expect_request(f"{prefix}/issues/1/labels", method="GET").respond_with_json(labels)
+    if write_method:
+        uri = f"{prefix}/issues/1/labels" + ("/skip news" if write_method == "DELETE" else "")
+        server.expect_request(uri, method=write_method).respond_with_json(labels)
+    result = action(
+        repository,
+        tmp_path,
+        action_scripts,
+        "label-bot-news",
+        version="0.2.0",
+        REPOSITORY="tox-dev/fixture",
+        PR_NUMBER="1",
+        BOT_AUTHOR="true",
+        FRAGMENTS="changelog.d",
+        EXTENSION="md",
+        RUNNER_TEMP=str(tmp_path),
+        **environment,
+    )
+    assert result.returncode == 0, result.stderr
+    assert [request.method for request, _ in server.log] == ["GET", "GET"] + ([write_method] if write_method else [])
+
+
+def test_label_bot_news_ignores_human(
+    repository: Path, tmp_path: Path, action_scripts: Path, github_api: tuple[HTTPServer, dict[str, str]]
+) -> None:
+    server, environment = github_api
+    result = action(
+        repository,
+        tmp_path,
+        action_scripts,
+        "label-bot-news",
+        version="0.2.0",
+        BOT_AUTHOR="false",
+        **environment,
+    )
+    assert result.returncode == 0
+    assert not server.log
+
+
+def test_label_bot_news_rejects_extension(
+    repository: Path, tmp_path: Path, action_scripts: Path, github_api: tuple[HTTPServer, dict[str, str]]
+) -> None:
+    server, environment = github_api
+    result = action(
+        repository,
+        tmp_path,
+        action_scripts,
+        "label-bot-news",
+        version="0.2.0",
+        BOT_AUTHOR="true",
+        EXTENSION="txt",
+        **environment,
+    )
+    assert result.returncode != 0
+    assert "fragment extension must be md or rst" in result.stderr
+    assert not server.log

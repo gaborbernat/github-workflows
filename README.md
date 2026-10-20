@@ -1,8 +1,57 @@
 # GitHub workflows
 
-Five composite Actions prepare a Towncrier release, verify its patch, push an App-authored commit and tag, build a
-Python wheel and sdist, and render GitHub Release notes. They run as steps in the caller's workflow. Each repository
-keeps its dispatch form, publisher, GitHub environment, and required check names.
+Composite Actions check PR news, prepare a Towncrier release, verify its patch, push an App-authored commit and tag,
+build a Python wheel and sdist, and render GitHub Release notes. They run as steps in the caller's workflow. Each
+repository keeps its dispatch form, publisher, GitHub environment, and required check names.
+
+## Check pull request news
+
+`validate-news` reads `tool.towncrier` from `pyproject.toml`. It checks every added or modified fragment in the
+configured directory against the configured categories, filename format, and nonempty content. A valid fragment runs
+`towncrier check` against the PR base. A human PR without a fragment needs `skip news`; a bot PR without a fragment does
+not. A bot's supplied fragment is checked and included in the normal release flow. The Action reads repository files and
+Git history; it does not add labels or write to GitHub.
+
+Keep the caller's existing `changelog` job name and full checkout. Install Towncrier from the caller's release lock
+before calling the Action:
+
+```yaml
+changelog:
+  if: github.event_name == 'pull_request'
+  runs-on: ubuntu-26.04
+  permissions:
+    contents: read
+  steps:
+    - uses: actions/checkout@CHECKOUT_SHA
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: astral-sh/setup-uv@SETUP_UV_SHA
+      with:
+        python-version: "3.15"
+    - run: |
+        uv venv --python 3.15 "$RUNNER_TEMP/release-tools"
+        uv pip sync --preview-features pylock --python "$RUNNER_TEMP/release-tools/bin/python" --group release pylock.toml
+        echo "$RUNNER_TEMP/release-tools/bin" >>"$GITHUB_PATH"
+    - uses: tox-dev/github-workflows/validate-news@SHA
+```
+
+Set `config` if Towncrier is configured in another Python project file. The Action expects a pull request base ref and a
+Markdown or reStructuredText changelog. The caller should also run on `labeled` and `unlabeled` events, so a label added
+after opening the PR updates the required check.
+
+`label-bot-news` adds `skip news` to a bot PR with no fragment and removes it when the bot adds one. It reads the PR
+file list through GitHub's API and never checks out PR code. Keep it in a separate `pull_request_target` workflow so the
+read-only changelog job does not receive Issues write access. The
+[caller in this repository](.github/workflows/label-bot-news.yaml) shows the permissions and events. Set `fragments` and
+`extension` for an RST repository:
+
+```yaml
+- uses: tox-dev/github-workflows/label-bot-news@SHA
+  with:
+    fragments: docs/changelog
+    extension: rst
+```
 
 ## Start with a caller
 
