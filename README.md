@@ -45,6 +45,59 @@ uploads. The [read-only validation workflow](.github/workflows/validate-release.
 repository's PR check and tag release. It builds a local candidate for PRs, checks the tagged source, and renders the
 Release body. The tag caller alone has a Contents write job that creates the GitHub Release.
 
+## Validate a Python release in both workflows
+
+`validate-python-release.yaml` runs the shared Towncrier, package build, and note-rendering path from an exact PR head
+or an existing tag. A PR run squashes the proposed changes onto its base, adds one synthetic bug-fix fragment, and
+creates a commit and tag in the runner. It prepares and checks the changelog patch, runs `prek` on the candidate, builds
+the wheel and sdist, and checks the rendered links and author credit. The local commit and tag never leave the runner.
+
+Call the same pinned workflow from the PR check and the tag publisher's build job:
+
+```yaml
+release-dry-run:
+  if: github.event_name == 'pull_request'
+  uses:
+    tox-dev/github-workflows/.github/workflows/validate-python-release.yaml@SHA
+  permissions:
+    contents: read
+    pull-requests: read
+  with:
+    changelog: CHANGELOG.md
+    fragments: changelog.d
+    format: markdown
+    artifact-base-url: https://pypi.org/project/example/
+```
+
+```yaml
+build:
+  uses:
+    tox-dev/github-workflows/.github/workflows/validate-python-release.yaml@SHA
+  permissions:
+    contents: read
+    pull-requests: read
+  with:
+    changelog: CHANGELOG.md
+    fragments: changelog.d
+    format: markdown
+    artifact-base-url: https://pypi.org/project/example/
+```
+
+The inputs must match in both callers. `changelog` and `fragments` are the paths in `tool.towncrier`; `format` is
+`markdown` when the caller's `mdformat` hook formats its assembled changelog and `none` otherwise. `artifact-base-url`
+ends just before the version; the workflow appends `1.2.3/` for tag `1.2.3`. Set it to the package's actual PyPI project
+path. `artifact-label` changes the link text from `PyPI release`; `issue-role` selects whether reStructuredText
+`:issue:` references link to issues or pull requests. `lock` defaults to `pylock.toml` and must have a `release` group
+with `release-creator`, Towncrier, and `prek`. `python-version` defaults to `3.15`; `source` defaults to the repository
+root for `uv build`.
+
+The job uploads `python-package-distributions` with the wheel and sdist, and `release-validation-notes` with the body
+rendered from the tagged source. On a PR it also uploads `release-dry-run` with the patch, assembled changelog, notes,
+contributor fixture, and distribution hashes. A tag run has no fixture, so its notes lack GitHub contributor metadata.
+The tag-only GitHub Release job must fetch generated notes with Contents write, rerender with `render-release-notes`,
+and create the Release after the ecosystem upload. PyPI OIDC stays in the caller's separate `release` environment job:
+[PyPI does not support trusted publishing inside reusable workflows](https://docs.pypi.org/trusted-publishers/troubleshooting/#reusable-workflows-on-github).
+
 ## Prepare Towncrier release
 
 `prepare-towncrier` reads a clean checkout, chooses the next version, links named fragments to their squash PRs, runs

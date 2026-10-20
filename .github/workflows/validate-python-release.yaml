@@ -1,0 +1,185 @@
+name: Validate Python release
+on:
+  workflow_call:
+    inputs:
+      changelog:
+        description: Tracked changelog path
+        required: true
+        type: string
+      fragments:
+        description: Towncrier fragment directory
+        required: true
+        type: string
+      format:
+        description: Changelog format passed to prepare-towncrier
+        required: true
+        type: string
+      artifact-base-url:
+        description: Ecosystem release URL without the version
+        required: true
+        type: string
+      artifact-label:
+        description: Link text for the ecosystem release
+        default: PyPI release
+        type: string
+      issue-role:
+        description: Target for reStructuredText issue roles
+        default: issue
+        type: string
+      lock:
+        description: Release-tool pylock.toml path
+        default: pylock.toml
+        type: string
+      python-version:
+        description: Python version for release tooling and package build
+        default: "3.15"
+        type: string
+      source:
+        description: Package source directory
+        default: .
+        type: string
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: ${{ inputs.python-version }}
+          enable-cache: false
+      - name: Install locked release tools
+        env:
+          LOCK: ${{ inputs.lock }}
+          PYTHON_VERSION: ${{ inputs.python-version }}
+        run: |
+          set -euo pipefail
+          uv venv --python "$PYTHON_VERSION" "$RUNNER_TEMP/release-tools"
+          uv pip sync --preview-features pylock --python "$RUNNER_TEMP/release-tools/bin/python" --group release "$LOCK"
+          echo "$RUNNER_TEMP/release-tools/bin" >>"$GITHUB_PATH"
+      - name: Create a local release candidate
+        if: github.event_name == 'pull_request'
+        id: fixture
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          FRAGMENTS: ${{ inputs.fragments }}
+        run: |
+          set -euo pipefail
+          git checkout -B release-validation "$BASE_SHA"
+          git merge --squash "$HEAD_SHA"
+          printf 'Validate the release pipeline on this pull request.\n' >"$FRAGMENTS/+validation-${PR_NUMBER}.bugfix.md"
+          git add -A
+          git -c user.name=release-validation -c user.email=release-validation@users.noreply.github.com commit -m "Validate release pipeline (#${PR_NUMBER})"
+          git init --bare "$RUNNER_TEMP/rehearsal.git"
+          git remote add rehearsal "$RUNNER_TEMP/rehearsal.git"
+          git push rehearsal HEAD:main
+          echo "sha=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
+      - id: prepare
+        if: github.event_name == 'pull_request'
+        uses: tox-dev/github-workflows/prepare-towncrier@eebfb35f18a56bcb11ba6fe9fbfb478589253451
+        with:
+          changelog: ${{ inputs.changelog }}
+          fragments: ${{ inputs.fragments }}
+          format: ${{ inputs.format }}
+          patch: ${{ runner.temp }}/release.patch
+      - name: Restore release candidate
+        if: github.event_name == 'pull_request'
+        run: git reset --hard HEAD
+      - if: github.event_name == 'pull_request'
+        uses: tox-dev/github-workflows/validate-release-patch@eebfb35f18a56bcb11ba6fe9fbfb478589253451
+        with:
+          version: ${{ steps.prepare.outputs.version }}
+          patch: ${{ runner.temp }}/release.patch
+          changelog: ${{ inputs.changelog }}
+          fragments: ${{ inputs.fragments }}
+          remote: rehearsal
+          expected-sha: ${{ steps.fixture.outputs.sha }}
+      - name: Commit and tag the local candidate
+        if: github.event_name == 'pull_request'
+        env:
+          VERSION: ${{ steps.prepare.outputs.version }}
+        run: |
+          git -c user.name=release-validation -c user.email=release-validation@users.noreply.github.com commit -m "release $VERSION"
+          git tag "$VERSION"
+      - uses: tox-dev/github-workflows/build-python-distribution@eebfb35f18a56bcb11ba6fe9fbfb478589253451
+        with:
+          lock: ${{ inputs.lock }}
+          python-version: ${{ inputs.python-version }}
+          source: ${{ inputs.source }}
+      - name: Prepare contributor fixture
+        if: github.event_name == 'pull_request'
+        id: metadata
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          printf '* Validate release pipeline by @%s in https://github.com/%s/pull/%s\n' \
+            "$PR_AUTHOR" "$GITHUB_REPOSITORY" "$PR_NUMBER" >"$RUNNER_TEMP/generated-notes.md"
+          echo "path=$RUNNER_TEMP/generated-notes.md" >>"$GITHUB_OUTPUT"
+      - uses: tox-dev/github-workflows/render-release-notes@eebfb35f18a56bcb11ba6fe9fbfb478589253451
+        with:
+          tag: ${{ steps.prepare.outputs.version || github.ref_name }}
+          changelog: ${{ inputs.changelog }}
+          repository: ${{ github.repository }}
+          artifact-url: ${{ inputs.artifact-base-url }}${{ steps.prepare.outputs.version || github.ref_name }}/
+          artifact-label: ${{ inputs.artifact-label }}
+          issue-role: ${{ inputs.issue-role }}
+          generated-notes: ${{ steps.metadata.outputs.path }}
+          output: ${{ runner.temp }}/release-notes.md
+      - name: Inspect candidate artifacts
+        if: github.event_name == 'pull_request'
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_AUTHOR_TYPE: ${{ github.event.pull_request.user.type }}
+          CHANGELOG: ${{ inputs.changelog }}
+        run: |
+          set -euo pipefail
+          test "$(grep -c '^\*\*Full Changelog\*\*:' "$RUNNER_TEMP/release-notes.md")" -eq 1
+          grep -Fq "[#${PR_NUMBER}](https://github.com/${GITHUB_REPOSITORY}/pull/${PR_NUMBER})" "$RUNNER_TEMP/release-notes.md"
+          if [[ "$PR_AUTHOR_TYPE" == Bot ]]; then
+            if grep -Fq "by @${PR_AUTHOR}" "$RUNNER_TEMP/release-notes.md"; then
+              echo '::error::bot credit in release notes'
+              exit 1
+            fi
+          else
+            grep -Fq "by @${PR_AUTHOR}" "$RUNNER_TEMP/release-notes.md"
+          fi
+          if grep -Fq '<!-- Release notes generated' "$RUNNER_TEMP/release-notes.md"; then
+            echo '::error::generated-notes banner in release notes'
+            exit 1
+          fi
+          sha256sum dist/* >"$RUNNER_TEMP/dist.sha256"
+          cp "$CHANGELOG" "$RUNNER_TEMP/changelog"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: python-package-distributions
+          path: dist/*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-validation-notes
+          path: ${{ runner.temp }}/release-notes.md
+          if-no-files-found: error
+      - if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-dry-run
+          path: |
+            ${{ runner.temp }}/release.patch
+            ${{ runner.temp }}/release-notes.md
+            ${{ runner.temp }}/generated-notes.md
+            ${{ runner.temp }}/changelog
+            ${{ runner.temp }}/dist.sha256
+            dist/*
+          if-no-files-found: error
