@@ -168,7 +168,8 @@ creates a commit and tag in the runner. It prepares and checks the changelog pat
 the wheel and sdist, and checks both entries' links and author credits. It also checks rejection of unsupported or
 missing fragments, a dirty checkout, an existing release tag, a stale release branch, a patch with an unrelated file, an
 invalid tag, and a missing changelog. The local commit and tag never leave the runner. The same tagged-source rendering
-step runs on the local PR tag and on a real tag; the PR also renders a separate copy with its contributor fixture.
+step runs on the local PR tag and on a real tag; the PR also renders a separate copy with its contributor fixture. The
+workflow uses `$/` for its own Actions, so a caller pinned to a workflow commit runs those Actions from the same commit.
 
 Call the same pinned workflow from the PR check and the tag publisher's build job:
 

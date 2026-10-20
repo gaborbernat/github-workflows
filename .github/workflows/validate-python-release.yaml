@@ -199,7 +199,7 @@ jobs:
       - id: invalid_fragment
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         name: Reject an unsupported fragment
-        uses: tox-dev/github-workflows/prepare-towncrier@eebfb35f18a56bcb11ba6fe9fbfb478589253451
+        uses: $/prepare-towncrier
         continue-on-error: true
         with:
           changelog: ${{ inputs.changelog }}
@@ -221,7 +221,7 @@ jobs:
       - id: dirty_prepare
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         name: Reject a dirty release checkout
-        uses: tox-dev/github-workflows/prepare-towncrier@eebfb35f18a56bcb11ba6fe9fbfb478589253451
+        uses: $/prepare-towncrier
         continue-on-error: true
         with:
           changelog: ${{ inputs.changelog }}
@@ -241,7 +241,7 @@ jobs:
       - id: missing_fragment
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         name: Reject a missing release fragment
-        uses: tox-dev/github-workflows/prepare-towncrier@eebfb35f18a56bcb11ba6fe9fbfb478589253451
+        uses: $/prepare-towncrier
         continue-on-error: true
         with:
           fragments: ${{ runner.temp }}/empty-fragments
@@ -255,7 +255,7 @@ jobs:
         run: test "$OUTCOME" = failure
       - id: prepare
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-        uses: tox-dev/github-workflows/prepare-towncrier@eebfb35f18a56bcb11ba6fe9fbfb478589253451
+        uses: $/prepare-towncrier
         with:
           changelog: ${{ inputs.changelog }}
           fragments: ${{ inputs.fragments }}
@@ -272,7 +272,7 @@ jobs:
       - id: stale_tag
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         name: Reject an existing release tag
-        uses: tox-dev/github-workflows/prepare-towncrier@eebfb35f18a56bcb11ba6fe9fbfb478589253451
+        uses: $/prepare-towncrier
         continue-on-error: true
         with:
           version: ${{ steps.prepare.outputs.version }}
@@ -291,7 +291,7 @@ jobs:
       - id: stale_validate
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         name: Reject a stale release branch
-        uses: tox-dev/github-workflows/validate-release-patch@eebfb35f18a56bcb11ba6fe9fbfb478589253451
+        uses: $/validate-release-patch
         continue-on-error: true
         with:
           version: ${{ steps.prepare.outputs.version }}
@@ -319,7 +319,7 @@ jobs:
       - id: invalid_patch
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         name: Reject a release patch with an unrelated file
-        uses: tox-dev/github-workflows/validate-release-patch@eebfb35f18a56bcb11ba6fe9fbfb478589253451
+        uses: $/validate-release-patch
         continue-on-error: true
         with:
           version: ${{ steps.prepare.outputs.version }}
@@ -338,7 +338,7 @@ jobs:
           git diff --cached --name-only | grep -Fxq release-validation-unexpected.txt
           git reset --hard HEAD
       - if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-        uses: tox-dev/github-workflows/validate-release-patch@eebfb35f18a56bcb11ba6fe9fbfb478589253451
+        uses: $/validate-release-patch
         with:
           version: ${{ steps.prepare.outputs.version }}
           patch: ${{ runner.temp }}/release.patch
@@ -356,7 +356,7 @@ jobs:
           git tag "$VERSION"
       - name: Render tagged-source notes
         if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-        uses: tox-dev/github-workflows/render-release-notes@eebfb35f18a56bcb11ba6fe9fbfb478589253451
+        uses: $/render-release-notes
         with:
           tag: ${{ steps.prepare.outputs.version || github.ref_name }}
           changelog: ${{ inputs.changelog }}
@@ -365,7 +365,7 @@ jobs:
           artifact-label: ${{ inputs.artifact-label }}
           issue-role: ${{ inputs.issue-role }}
           output: ${{ runner.temp }}/${{ github.event_name == 'push' && 'release-notes.md' || 'tag-preview-notes.md' }}
-      - uses: tox-dev/github-workflows/build-python-distribution@eebfb35f18a56bcb11ba6fe9fbfb478589253451
+      - uses: $/build-python-distribution
         with:
           lock: ${{ inputs.lock }}
           python-version: ${{ inputs.python-version }}
@@ -383,7 +383,7 @@ jobs:
       - id: invalid_tag
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         name: Reject an invalid release tag
-        uses: tox-dev/github-workflows/render-release-notes@eebfb35f18a56bcb11ba6fe9fbfb478589253451
+        uses: $/render-release-notes
         continue-on-error: true
         with:
           tag: bad tag
@@ -398,7 +398,7 @@ jobs:
       - id: missing_changelog
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         name: Reject a missing changelog
-        uses: tox-dev/github-workflows/render-release-notes@eebfb35f18a56bcb11ba6fe9fbfb478589253451
+        uses: $/render-release-notes
         continue-on-error: true
         with:
           tag: ${{ steps.prepare.outputs.version }}
@@ -410,7 +410,7 @@ jobs:
         env:
           OUTCOME: ${{ steps.missing_changelog.outcome }}
         run: test "$OUTCOME" = failure
-      - uses: tox-dev/github-workflows/render-release-notes@eebfb35f18a56bcb11ba6fe9fbfb478589253451
+      - uses: $/render-release-notes
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         with:
           tag: ${{ steps.prepare.outputs.version || github.ref_name }}
