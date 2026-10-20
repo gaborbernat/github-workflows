@@ -26,6 +26,20 @@ on:
         description: Target branch for the dependency pull request
         type: string
         default: main
+      commit-message:
+        description: Commit message for the refreshed lock
+        type: string
+        default: "🔧 build(deps): refresh release lock"
+      pull-request-title:
+        description: Title for the dependency pull request
+        type: string
+        default: "🔧 build(deps): refresh release tool lock"
+      pull-request-body:
+        description: Body for the dependency pull request
+        type: string
+        default: |-
+          🔧 Refresh the locked release tools to the latest versions allowed by the `release` dependency group.
+          `pylock.toml` records the exact versions used by release and changelog workflows.
 permissions: {}
 jobs:
   generate:
@@ -145,23 +159,23 @@ jobs:
           BRANCH: ${{ inputs.branch }}
           BASE: ${{ inputs.base }}
           CHECK_WORKFLOW: ${{ inputs.check-workflow }}
+          COMMIT_MESSAGE: ${{ inputs.commit-message }}
+          PR_TITLE: ${{ inputs.pull-request-title }}
+          PR_BODY: ${{ inputs.pull-request-body }}
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m '🔧 build(deps): refresh release lock'
+          git commit -m "$COMMIT_MESSAGE"
           gh auth setup-git --hostname github.com --force
           git push --force origin "HEAD:$BRANCH"
-          cat >"$RUNNER_TEMP/pull-request.md" <<'EOF'
-          🔧 Refresh the locked release tools to the latest versions allowed by the release dependency group.
-          The lock records the exact versions used by release and changelog workflows.
-          EOF
+          printf '%s\n' "$PR_BODY" >"$RUNNER_TEMP/pull-request.md"
           pr_number=$(gh pr list --base "$BASE" --head "$BRANCH" --state open --json number --jq '.[0].number')
           if [[ -n "$pr_number" ]]; then
-            gh pr edit "$pr_number" --title '🔧 build(deps): refresh release tool lock' \
+            gh pr edit "$pr_number" --title "$PR_TITLE" \
               --body-file "$RUNNER_TEMP/pull-request.md" --add-label dependencies --add-label 'skip news'
           else
-            gh pr create --base "$BASE" --head "$BRANCH" --title '🔧 build(deps): refresh release tool lock' \
+            gh pr create --base "$BASE" --head "$BRANCH" --title "$PR_TITLE" \
               --body-file "$RUNNER_TEMP/pull-request.md" --label dependencies --label 'skip news'
           fi
           gh workflow run "$CHECK_WORKFLOW" --ref "$BRANCH"

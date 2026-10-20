@@ -85,7 +85,8 @@ jobs:
 locked `prek` installation comes from that group. Use `release,test` when the same lock also powers tests. `lock`
 defaults to `pylock.toml`; `base` defaults to `main`; `branch` defaults to `automation/update-release-tools`.
 `check-workflow` names the caller's workflow file to dispatch after a PR update. The caller owns the schedule, so
-repositories can use different upgrade days without copying the jobs.
+repositories can use different upgrade days without copying the jobs. `commit-message`, `pull-request-title`, and
+`pull-request-body` let a caller retain its existing dependency PR wording.
 
 ## Start with a caller
 
