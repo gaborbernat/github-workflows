@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import tomllib
 from pathlib import Path
 from uuid import uuid4
 
@@ -43,43 +44,30 @@ def lock_repository(tmp_path: Path) -> Path:
     return repository
 
 
-@pytest.mark.parametrize(
-    ("groups", "accepted"),
-    [
-        pytest.param("release", True, id="release"),
-        pytest.param("release,test", True, id="release-and-test"),
-        pytest.param("release,$bad", False, id="invalid-group"),
-        pytest.param("test", False, id="missing-release-group"),
-    ],
-)
-def test_upgrade_compiles_selected_groups(
-    lock_repository: Path, tmp_path: Path, upgrade_scripts: Path, groups: str, accepted: bool
-) -> None:
+def test_upgrade_exports_every_group(lock_repository: Path, tmp_path: Path, upgrade_scripts: Path) -> None:
     result = execute(
         lock_repository,
         upgrade_scripts / "refresh-release-lock-0.sh",
         tmp_path,
         LOCK="pylock.toml",
-        DEP_GROUPS=groups,
         PYTHON_VERSION="3.15",
     )
-    assert (result.returncode == 0) == accepted
-    if accepted:
-        assert (lock_repository / "pylock.toml").read_text().count("--group pyproject.toml:") == groups.count(",") + 1
-    else:
-        assert "::error::" in result.stderr
+    assert result.returncode == 0, result.stderr
+    lock = tomllib.loads((lock_repository / "pylock.toml").read_text())
+    assert (lock["requires-python"], lock["dependency-groups"]) == (">=3.15", ["project-runtime", "release", "test"])
 
 
-@pytest.mark.parametrize("changed", [False, True], ids=["unchanged", "changed"])
+@pytest.mark.parametrize("changed_path", [None, "pylock.toml", "uv.lock"], ids=["unchanged", "pylock", "uv-lock"])
 def test_upgrade_emits_patch_only_for_change(
-    lock_repository: Path, tmp_path: Path, upgrade_scripts: Path, changed: bool
+    lock_repository: Path, tmp_path: Path, upgrade_scripts: Path, changed_path: str | None
 ) -> None:
     lock = lock_repository / "pylock.toml"
     lock.write_text('lock-version = "1.0"\n')
+    (lock_repository / "uv.lock").write_text("before\n")
     run(lock_repository, "git", "add", ".")
     run(lock_repository, "git", "commit", "-m", "Add lock")
-    if changed:
-        lock.write_text('lock-version = "1.0"\ncreated-by = "uv"\n')
+    if changed_path:
+        (lock_repository / changed_path).write_text("after\n")
     result = execute(
         lock_repository,
         upgrade_scripts / "refresh-release-lock-2.sh",
@@ -88,8 +76,10 @@ def test_upgrade_emits_patch_only_for_change(
         GITHUB_OUTPUT=str(tmp_path / "output"),
     )
     assert result.returncode == 0
-    assert (tmp_path / "output").read_text() == f"changed={str(changed).lower()}\n"
-    assert (tmp_path / "lock.patch").exists() == changed
+    assert (tmp_path / "output").read_text() == f"changed={str(bool(changed_path)).lower()}\n"
+    assert (tmp_path / "lock.patch").exists() == bool(changed_path)
+    if changed_path:
+        assert f"diff --git a/{changed_path} b/{changed_path}" in (tmp_path / "lock.patch").read_text()
 
 
 @pytest.mark.parametrize("unrelated", [False, True], ids=["clean", "unrelated-file"])
@@ -129,10 +119,10 @@ def test_upgrade_checks_refreshed_lock(
         PYTHON_VERSION="3.15",
     )
     assert (result.returncode == 0) != unrelated, result.stderr
-    assert ("prek changed file outside pylock.toml" in result.stderr) == unrelated
+    assert ("prek changed file outside the lock files" in result.stderr) == unrelated
 
 
-@pytest.mark.parametrize("path", ["pylock.toml", "other.txt"], ids=["lock-only", "unrelated-file"])
+@pytest.mark.parametrize("path", ["pylock.toml", "uv.lock", "other.txt"], ids=["pylock", "uv-lock", "unrelated-file"])
 def test_upgrade_rejects_unrelated_patch(
     lock_repository: Path, tmp_path: Path, publish_scripts: Path, path: str
 ) -> None:
@@ -148,8 +138,8 @@ def test_upgrade_rejects_unrelated_patch(
     result = execute(
         lock_repository, publish_scripts / "publish-validate-and-apply-lock-patch.sh", tmp_path, LOCK="pylock.toml"
     )
-    assert (result.returncode == 0) == (path == "pylock.toml")
-    assert ("unexpected lock paths" in result.stderr) == (path != "pylock.toml")
+    assert (result.returncode == 0) == (path != "other.txt")
+    assert ("unexpected lock path" in result.stderr) == (path == "other.txt")
 
 
 def execute(repository: Path, script: Path, tmp_path: Path, **environment: str) -> subprocess.CompletedProcess[str]:
@@ -161,7 +151,12 @@ def execute(repository: Path, script: Path, tmp_path: Path, **environment: str) 
     return subprocess.run(
         command,
         cwd=repository,
-        env=os.environ | {"RUNNER_TEMP": str(tmp_path)} | environment,
+        env=os.environ
+        | {
+            "RUNNER_TEMP": str(tmp_path),
+            "GITHUB_ACTION_PATH": str(Path(__file__).resolve().parents[2] / "refresh-release-lock"),
+        }
+        | environment,
         text=True,
         capture_output=True,
         check=False,

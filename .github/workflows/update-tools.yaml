@@ -12,7 +12,6 @@ jobs:
       contents: write
       pull-requests: write
     with:
-      groups: release,test
       python-version: "3.15"
       check-workflow: check.yaml
       commit-message: "🔧 build: refresh release tool lock"

@@ -57,10 +57,10 @@ legacy fragment path:
 ## Refresh the release tool lock
 
 Call `upgrade-release-tools.yaml` from a scheduled or manual workflow. Its first job has Contents read access: it
-compiles the selected dependency groups into `pylock.toml`, runs `prek`, and uploads a patch only when the lock changes.
-Its second job runs only on the configured base branch when that patch exists. It checks the patch touches only the
-lock, then opens or updates a `dependencies` and `skip news` pull request and dispatches the caller's check workflow.
-The writer has Contents, Pull requests, and Actions write access. No App key or release credential is needed.
+exports the project runtime, groups, and extras into `pylock.toml`, runs `prek`, and uploads a patch when a lock
+changes. Its second job runs only on the configured base branch when that patch exists. It checks the patch touches only
+the lock files, then opens or updates a `dependencies` and `skip news` pull request and dispatches the caller's check
+workflow. The writer has Contents, Pull requests, and Actions write access. No App key or release credential is needed.
 
 ```yaml
 name: Upgrade release tools
@@ -78,23 +78,21 @@ jobs:
       pull-requests: write
       actions: write
     with:
-      groups: release
       python-version: '3.15'
       check-workflow: check.yaml
 ```
 
-`groups` is a comma-separated list of `pyproject.toml` dependency groups; `release` must be one of them because the
-locked `prek` installation comes from that group. Use `release,test` when the same lock also powers tests. `lock`
+The project must declare a `release` group containing `prek`. The lock also includes every other group and extra. `lock`
 defaults to `pylock.toml`; `base` defaults to `main`; `branch` defaults to `automation/update-release-tools`.
 `check-workflow` names the caller's workflow file to dispatch after a PR update. The caller owns the schedule, so
 repositories can use different upgrade days without copying the jobs. `commit-message`, `pull-request-title`, and
 `pull-request-body` let a caller retain its existing dependency PR wording.
 
 To check the same lock refresh on a PR, call `refresh-release-lock` in a job with Contents read permission. The reusable
-updater calls this Action in its generator job. It reads dependency groups from `pyproject.toml`, rewrites the local
-lock, installs its `release` group, and runs `prek`. It fails if `prek` changes another file. Its `changed` output is
-`true` only when the compiled lock differs from the checkout; in that case it writes `$RUNNER_TEMP/lock.patch`. The
-Action does not push a branch, open a PR, or request a write token.
+updater calls this Action in its generator job. It resolves the project through uv, rewrites the local `pylock.toml`,
+installs its `release` group, and runs `prek`. It also updates a tracked `uv.lock` when present. It fails if `prek`
+changes another file. Its `changed` output is `true` when a lock differs from the checkout; then it writes
+`$RUNNER_TEMP/lock.patch`. The Action does not push a branch, open a PR, or request a write token.
 
 ```yaml
 release-tools-preview:
@@ -112,7 +110,6 @@ release-tools-preview:
     - id: lock
       uses: tox-dev/github-workflows/refresh-release-lock@SHA
       with:
-        groups: release
         python-version: '3.15'
 ```
 

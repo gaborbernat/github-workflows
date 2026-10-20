@@ -6,12 +6,8 @@ on:
         description: Path to the checked-in pylock file
         type: string
         default: pylock.toml
-      groups:
-        description: Comma-separated pyproject dependency groups to refresh
-        type: string
-        default: release
       python-version:
-        description: Python version used to resolve and check the lock
+        description: Python version used to run the exporter and release tools
         type: string
         default: "3.15"
       branch:
@@ -38,8 +34,7 @@ on:
         description: Body for the dependency pull request
         type: string
         default: |-
-          🔧 Refresh the locked release tools to the latest versions allowed by the `release` dependency group.
-          `pylock.toml` records the exact versions used by release and changelog workflows.
+          Refresh the project lock across its runtime dependencies, groups, extras, and supported Python versions.
 permissions: {}
 jobs:
   generate:
@@ -61,7 +56,6 @@ jobs:
         uses: $/refresh-release-lock
         with:
           lock: ${{ inputs.lock }}
-          groups: ${{ inputs.groups }}
           python-version: ${{ inputs.python-version }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: steps.lock.outputs.changed == 'true'
@@ -95,11 +89,12 @@ jobs:
           set -euo pipefail
           git apply --check "$RUNNER_TEMP/release-tools-lock/lock.patch"
           git apply --index "$RUNNER_TEMP/release-tools-lock/lock.patch"
-          paths=$(git diff --cached --name-only)
-          if [[ "$paths" != "$LOCK" ]]; then
-            echo "::error::unexpected lock paths: $paths" >&2
-            exit 1
-          fi
+          while IFS= read -r path; do
+            if [[ "$path" != "$LOCK" && "$path" != uv.lock ]]; then
+              echo "::error::unexpected lock path: $path" >&2
+              exit 1
+            fi
+          done < <(git diff --cached --name-only)
           git diff --cached --check
       - name: Open or update dependency pull request
         env:

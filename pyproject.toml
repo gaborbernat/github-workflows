@@ -6,7 +6,7 @@ requires-python = ">=3.15"
 dependencies = []
 
 [dependency-groups]
-release = [ "release-creator @ git+https://github.com/tox-dev/release-creator@b710d0913a8da770551efaf93c763432c01bec3d", "towncrier>=26.9", "prek>=0.2", "yq>=4.4.5" ]
+release = [ "release-creator @ git+https://github.com/tox-dev/release-creator@6377ed5b470b66fca2bf482ca1a73d95e611f517", "towncrier>=26.9", "prek>=0.2", "yq>=4.4.5" ]
 test = [ "pytest>=9", "pytest-httpserver", "pyyaml>=6", "ruff", "trustme", "ty" ]
 
 [tool.ruff]

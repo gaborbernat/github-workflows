@@ -9,7 +9,7 @@ Use Python 3.15 and the checked-in release-tool lock:
 
 ```bash
 uv venv --python 3.15 .venv
-uv pip sync --preview-features pylock --python .venv/bin/python pylock.toml
+uv pip sync --preview-features pylock --python .venv/bin/python --group release --group test pylock.toml
 export PATH="$PWD/.venv/bin:$PATH"
 ```
 
