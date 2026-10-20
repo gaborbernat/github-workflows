@@ -53,6 +53,40 @@ read-only changelog job does not receive Issues write access. The
     extension: rst
 ```
 
+## Refresh the release tool lock
+
+Call `upgrade-release-tools.yaml` from a scheduled or manual workflow. Its first job has Contents read access: it
+compiles the selected dependency groups into `pylock.toml`, runs `prek`, and uploads a patch only when the lock changes.
+Its second job runs only on the configured base branch when that patch exists. It checks the patch touches only the
+lock, then opens or updates a `dependencies` and `skip news` pull request and dispatches the caller's check workflow.
+The writer has Contents, Pull requests, and Actions write access. No App key or release credential is needed.
+
+```yaml
+name: Upgrade release tools
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 8 * * 2"
+permissions: {}
+jobs:
+  upgrade:
+    uses: tox-dev/github-workflows/.github/workflows/upgrade-release-tools.yaml@SHA
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    with:
+      groups: release
+      python-version: "3.15"
+      check-workflow: check.yaml
+```
+
+`groups` is a comma-separated list of `pyproject.toml` dependency groups; `release` must be one of them because the
+locked `prek` installation comes from that group. Use `release,test` when the same lock also powers tests. `lock`
+defaults to `pylock.toml`; `base` defaults to `main`; `branch` defaults to `automation/update-release-tools`.
+`check-workflow` names the caller's workflow file to dispatch after a PR update. The caller owns the schedule, so
+repositories can use different upgrade days without copying the jobs.
+
 ## Start with a caller
 
 The [release preparation workflow](.github/workflows/prepare-release.yaml) in this repository is a complete caller. Its
