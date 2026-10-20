@@ -90,9 +90,9 @@ repositories can use different upgrade days without copying the jobs. `commit-me
 
 To check the same lock refresh on a PR, call `refresh-release-lock` in a job with Contents read permission. The reusable
 updater calls this Action in its generator job. It resolves the project through uv, rewrites the local `pylock.toml`,
-installs its `release` group, and runs `prek`. It also updates a tracked `uv.lock` when present. It fails if `prek`
-changes another file. Its `changed` output is `true` when a lock differs from the checkout; then it writes
-`$RUNNER_TEMP/lock.patch`. The Action does not push a branch, open a PR, or request a write token.
+installs its `release` group, and runs `prek`. It rejects changes to any other file, including `uv.lock`. Its `changed`
+output is `true` when a lock differs from the checkout; then it writes `$RUNNER_TEMP/lock.patch`. The Action does not
+push a branch, open a PR, or request a write token.
 
 ```yaml
 release-tools-preview:

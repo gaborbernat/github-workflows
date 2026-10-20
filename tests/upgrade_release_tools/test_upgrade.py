@@ -76,15 +76,16 @@ def test_upgrade_emits_patch_only_for_change(
         GITHUB_OUTPUT=str(tmp_path / "output"),
     )
     assert result.returncode == 0
-    assert (tmp_path / "output").read_text() == f"changed={str(bool(changed_path)).lower()}\n"
-    assert (tmp_path / "lock.patch").exists() == bool(changed_path)
-    if changed_path:
+    lock_changed = changed_path == "pylock.toml"
+    assert (tmp_path / "output").read_text() == f"changed={str(lock_changed).lower()}\n"
+    assert (tmp_path / "lock.patch").exists() == lock_changed
+    if lock_changed:
         assert f"diff --git a/{changed_path} b/{changed_path}" in (tmp_path / "lock.patch").read_text()
 
 
-@pytest.mark.parametrize("unrelated", [False, True], ids=["clean", "unrelated-file"])
+@pytest.mark.parametrize("unrelated", [None, "other.txt", "uv.lock"], ids=["clean", "unrelated-file", "uv-lock"])
 def test_upgrade_checks_refreshed_lock(
-    lock_repository: Path, tmp_path: Path, upgrade_scripts: Path, unrelated: bool
+    lock_repository: Path, tmp_path: Path, upgrade_scripts: Path, unrelated: str | None
 ) -> None:
     project = lock_repository / "pyproject.toml"
     project.write_text(project.read_text().replace("release = []", 'release = ["prek"]'))
@@ -110,7 +111,7 @@ def test_upgrade_checks_refreshed_lock(
     run(lock_repository, "git", "add", ".")
     run(lock_repository, "git", "commit", "-m", "Add release tools")
     if unrelated:
-        (lock_repository / "other.txt").write_text("after\n")
+        (lock_repository / unrelated).write_text("after\n")
     result = execute(
         lock_repository,
         upgrade_scripts / "refresh-release-lock-1.sh",
@@ -118,8 +119,8 @@ def test_upgrade_checks_refreshed_lock(
         LOCK="pylock.toml",
         PYTHON_VERSION="3.15",
     )
-    assert (result.returncode == 0) != unrelated, result.stderr
-    assert ("prek changed file outside the lock files" in result.stderr) == unrelated
+    assert (result.returncode == 0) == (unrelated is None), result.stderr
+    assert ("prek changed file outside the lock file" in result.stderr) == (unrelated is not None)
 
 
 @pytest.mark.parametrize("path", ["pylock.toml", "uv.lock", "other.txt"], ids=["pylock", "uv-lock", "unrelated-file"])
@@ -138,8 +139,8 @@ def test_upgrade_rejects_unrelated_patch(
     result = execute(
         lock_repository, publish_scripts / "publish-validate-and-apply-lock-patch.sh", tmp_path, LOCK="pylock.toml"
     )
-    assert (result.returncode == 0) == (path != "other.txt")
-    assert ("unexpected lock path" in result.stderr) == (path == "other.txt")
+    assert (result.returncode == 0) == (path == "pylock.toml")
+    assert ("unexpected lock path" in result.stderr) == (path != "pylock.toml")
 
 
 def execute(repository: Path, script: Path, tmp_path: Path, **environment: str) -> subprocess.CompletedProcess[str]:

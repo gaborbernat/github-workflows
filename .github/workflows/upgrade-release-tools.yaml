@@ -90,7 +90,7 @@ jobs:
           git apply --check "$RUNNER_TEMP/release-tools-lock/lock.patch"
           git apply --index "$RUNNER_TEMP/release-tools-lock/lock.patch"
           while IFS= read -r path; do
-            if [[ "$path" != "$LOCK" && "$path" != uv.lock ]]; then
+            if [[ "$path" != "$LOCK" ]]; then
               echo "::error::unexpected lock path: $path" >&2
               exit 1
             fi
