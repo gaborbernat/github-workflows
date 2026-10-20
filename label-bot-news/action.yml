@@ -30,13 +30,14 @@ runs:
         fi
         gh api --paginate "repos/$REPOSITORY/pulls/$PR_NUMBER/files" --jq '.[].filename' >"$RUNNER_TEMP/bot-pr-files"
         has_fragment=false
-        while IFS= read -r path; do
+        mapfile -t files <"$RUNNER_TEMP/bot-pr-files"
+        for path in "${files[@]}"; do
           case "$path" in
           "$FRAGMENTS"/*.*."$EXTENSION")
             has_fragment=true
             ;;
           esac
-        done <"$RUNNER_TEMP/bot-pr-files"
+        done
         gh api "repos/$REPOSITORY/issues/$PR_NUMBER/labels" --jq '.[].name' >"$RUNNER_TEMP/bot-pr-labels"
         has_label=false
         if grep -Fxq 'skip news' "$RUNNER_TEMP/bot-pr-labels"; then
