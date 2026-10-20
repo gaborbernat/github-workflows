@@ -48,12 +48,12 @@ Release body. The tag caller alone has a Contents write job that creates the Git
 ## Validate a Python release in both workflows
 
 `validate-python-release.yaml` runs the shared Towncrier, package build, and note-rendering path from an exact PR head
-or an existing tag. A PR run squashes the proposed changes onto its base, adds one synthetic bug-fix fragment, and
+or an existing tag. A PR run squashes the proposed changes onto its base, adds named and numbered bug-fix fragments, and
 creates a commit and tag in the runner. It prepares and checks the changelog patch, runs `prek` on the candidate, builds
-the wheel and sdist, and checks the rendered links and author credit. It also checks rejection of unsupported fragments,
-a dirty checkout, an existing release tag, a stale release branch, a patch with an unrelated file, an invalid tag, and a
-missing changelog. The local commit and tag never leave the runner. It renders the local tag both with the PR's
-contributor fixture and without metadata, matching the read-only tag validation path.
+the wheel and sdist, and checks both entries' links and author credits. It also checks rejection of unsupported or
+missing fragments, a dirty checkout, an existing release tag, a stale release branch, a patch with an unrelated file, an
+invalid tag, and a missing changelog. The local commit and tag never leave the runner. It renders the local tag both
+with the PR's contributor fixture and without metadata, matching the read-only tag validation path.
 
 Call the same pinned workflow from the PR check and the tag publisher's build job:
 
@@ -110,7 +110,7 @@ contributor metadata. The tag-only GitHub Release job must fetch generated notes
 
 ## Prepare Towncrier release
 
-`prepare-towncrier` reads a clean checkout, chooses the next version, links named fragments to their squash PRs, runs
+`prepare-towncrier` reads a clean checkout, chooses the next version, links fragments to their squash PRs, runs
 Towncrier and `prek`, and writes a binary Git patch. It does not commit or push. It fails if version selection, notes
 rendering, formatting, or checks fail, or if preparation creates untracked files or no patch.
 

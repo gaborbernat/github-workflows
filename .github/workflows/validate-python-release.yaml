@@ -92,6 +92,8 @@ jobs:
           git checkout -B release-validation "$base_sha"
           git merge --squash "$head_sha"
           printf 'Verify a user-visible release fix.\n' >"$FRAGMENTS/+validation-${PR_NUMBER}.bugfix.md"
+          test ! -e "$FRAGMENTS/${PR_NUMBER}.bugfix.md"
+          printf 'Verify a numbered release fix.\n' >"$FRAGMENTS/${PR_NUMBER}.bugfix.md"
           git add -A
           git -c user.name=release-validation -c user.email=release-validation@users.noreply.github.com commit -m "Validate release pipeline (#${PR_NUMBER})"
           git init --bare "$RUNNER_TEMP/rehearsal.git"
@@ -150,6 +152,24 @@ jobs:
         run: |
           test "$OUTCOME" = failure
           rm untracked-release-file
+      - name: Create an empty fragment directory
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        run: mkdir "$RUNNER_TEMP/empty-fragments"
+      - id: missing_fragment
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        name: Reject a missing release fragment
+        uses: tox-dev/github-workflows/prepare-towncrier@eebfb35f18a56bcb11ba6fe9fbfb478589253451
+        continue-on-error: true
+        with:
+          fragments: ${{ runner.temp }}/empty-fragments
+          changelog: ${{ inputs.changelog }}
+          format: ${{ inputs.format }}
+          patch: ${{ runner.temp }}/missing-fragment.patch
+      - name: Check missing fragment rejection
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        env:
+          OUTCOME: ${{ steps.missing_fragment.outcome }}
+        run: test "$OUTCOME" = failure
       - id: prepare
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         uses: tox-dev/github-workflows/prepare-towncrier@eebfb35f18a56bcb11ba6fe9fbfb478589253451
@@ -335,13 +355,27 @@ jobs:
           set -euo pipefail
           test "$(grep -c '^\*\*Full Changelog\*\*:' "$RUNNER_TEMP/release-notes.md")" -eq 1
           grep -Fq "[#${PR_NUMBER}](https://github.com/${GITHUB_REPOSITORY}/pull/${PR_NUMBER})" "$RUNNER_TEMP/release-notes.md"
+          numbered=$(grep -F 'Verify a numbered release fix' "$RUNNER_TEMP/release-notes.md")
+          test "$(grep -oF "https://github.com/${GITHUB_REPOSITORY}/pull/${PR_NUMBER}" <<<"$numbered" | wc -l)" -eq 1
+          changelog_numbered=$(grep -F -A3 'Verify a numbered release fix' "$CHANGELOG")
+          if [[ "$CHANGELOG" == *.rst ]]; then
+            grep -Fq ":pr:\`${PR_NUMBER}\`" <<<"$changelog_numbered"
+          else
+            grep -Fq "https://github.com/${GITHUB_REPOSITORY}/pull/${PR_NUMBER}" <<<"$changelog_numbered"
+          fi
           if [[ "$PR_AUTHOR_TYPE" == Bot ]]; then
             if grep -Fq "by @${PR_AUTHOR}" "$RUNNER_TEMP/release-notes.md"; then
               echo '::error::bot credit in release notes'
               exit 1
             fi
+            if grep -Fq "by @${PR_AUTHOR}" <<<"$numbered"; then
+              echo '::error::bot credit in numbered release note'
+              exit 1
+            fi
           else
             grep -Fq "by @${PR_AUTHOR}" "$RUNNER_TEMP/release-notes.md"
+            grep -Fq "by @${PR_AUTHOR}" <<<"$numbered"
+            grep -Fq "$PR_AUTHOR" <<<"$changelog_numbered"
           fi
           if grep -Fq '<!-- Release notes generated' "$RUNNER_TEMP/release-notes.md"; then
             echo '::error::generated-notes banner in release notes'
