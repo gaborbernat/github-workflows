@@ -1,35 +1,10 @@
 from __future__ import annotations
 
-import ssl
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-import trustme
 from conftest import action
 from pytest_httpserver import HTTPServer
-
-
-@pytest.fixture
-def github_api(tmp_path: Path) -> Iterator[tuple[HTTPServer, dict[str, str]]]:
-    authority = trustme.CA()
-    certificate = authority.issue_cert("localhost")
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    certificate.configure_cert(context)
-    server = HTTPServer(host="localhost", ssl_context=context)
-    server.start()
-    bundle = tmp_path / "ca.pem"
-    authority.cert_pem.write_to_path(bundle)
-    yield (
-        server,
-        {
-            "GH_HOST": f"localhost:{server.port}",
-            "GH_ENTERPRISE_TOKEN": "test-token",
-            "SSL_CERT_FILE": str(bundle),
-            "NO_PROXY": "localhost,127.0.0.1",
-        },
-    )
-    server.stop()
 
 
 @pytest.mark.parametrize(
