@@ -92,6 +92,7 @@ def action(
             "ARTIFACT_LABEL": "PyPI release",
             "GENERATED_NOTES": "",
             "ISSUE_ROLE": "issue",
+            "RUNNER_TEMP": str(tmp_path),
         }
         | extra_env
     )

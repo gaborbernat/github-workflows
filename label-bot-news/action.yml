@@ -34,7 +34,6 @@ runs:
           case "$path" in
           "$FRAGMENTS"/*.*."$EXTENSION")
             has_fragment=true
-            break
             ;;
           esac
         done <"$RUNNER_TEMP/bot-pr-files"
