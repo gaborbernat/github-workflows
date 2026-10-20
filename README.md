@@ -28,7 +28,7 @@ changelog:
         persist-credentials: false
     - uses: astral-sh/setup-uv@SETUP_UV_SHA
       with:
-        python-version: "3.15"
+        python-version: '3.15'
     - run: |
         uv venv --python 3.15 "$RUNNER_TEMP/release-tools"
         uv pip sync --preview-features pylock --python "$RUNNER_TEMP/release-tools/bin/python" --group release pylock.toml
@@ -48,10 +48,10 @@ read-only changelog job does not receive Issues write access. The
 legacy fragment path:
 
 ```yaml
-- uses: tox-dev/github-workflows/label-bot-news@SHA
-  with:
-    fragments: docs/changelog
-    extension: rst
+  - uses: tox-dev/github-workflows/label-bot-news@SHA
+    with:
+      fragments: docs/changelog
+      extension: rst
 ```
 
 ## Refresh the release tool lock
@@ -67,18 +67,19 @@ name: Upgrade release tools
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 8 * * 2"
+    - cron: 0 8 * * 2
 permissions: {}
 jobs:
   upgrade:
-    uses: tox-dev/github-workflows/.github/workflows/upgrade-release-tools.yaml@SHA
+    uses:
+      tox-dev/github-workflows/.github/workflows/upgrade-release-tools.yaml@SHA
     permissions:
       contents: write
       pull-requests: write
       actions: write
     with:
       groups: release
-      python-version: "3.15"
+      python-version: '3.15'
       check-workflow: check.yaml
 ```
 
@@ -107,12 +108,12 @@ release-tools-preview:
         persist-credentials: false
     - uses: astral-sh/setup-uv@SETUP_UV_SHA
       with:
-        python-version: "3.15"
+        python-version: '3.15'
     - id: lock
       uses: tox-dev/github-workflows/refresh-release-lock@SHA
       with:
         groups: release
-        python-version: "3.15"
+        python-version: '3.15'
 ```
 
 The caller must check out the PR head and install uv before the Action. The preview exercises compilation and hooks; the
@@ -211,19 +212,19 @@ reStructuredText `:issue:` references link to issues or pull requests. `lock` de
 the repository root for `uv build`. `artifact-prefix` defaults to empty; set it while comparing this workflow with an
 existing PR rehearsal so the two jobs use distinct artifact names.
 
-For an RST changelog, use `format: rst` when the caller has a `docstrfmt` hook; otherwise use `format: none`. Set an
-empty `heading-prefix`. The workflow creates `.rst` test fragments from the changelog suffix and checks RST PR
-references in the assembled section. If the repository uses `:issue:` roles, set `fixture-issue` to an existing issue
-number. The PR rehearsal then checks its GitHub issue link in the rendered notes. The input has no effect on an existing
-tag:
+For an RST changelog, use `format: rst` when the caller has a `docstrfmt` hook; otherwise use `format: none`. Set
+`heading-prefix: " "` for Towncrier's overline headings, which indent the version by one space. The workflow creates
+`.rst` test fragments from the changelog suffix and checks RST PR references in the assembled section. If the repository
+uses `:issue:` roles, set `fixture-issue` to an existing issue number. The PR rehearsal then checks its GitHub issue
+link in the rendered notes. The input has no effect on an existing tag:
 
 ```yaml
 with:
   changelog: docs/changelog.rst
   fragments: docs/changelog
-  format: none
-  heading-prefix: ""
-  fixture-issue: "31"
+  format: rst
+  heading-prefix: ' '
+  fixture-issue: '31'
   artifact-base-url: https://pypi.org/project/filelock/
 ```
 
@@ -297,8 +298,8 @@ for the commit Action. It does not need a write token.
 - `changelog` **(required)**: Same tracked path passed to preparation. Only this file and files below `fragments` may
   change in the patch.
 - `fragments` **(required)**: Same directory passed to preparation. Towncrier may consume or rename its files.
-- `heading-prefix`: Text before the version in its heading; default `## `. For `Version 1.2.3 (date)`, use `Version `.
-  The Action expects the version to be followed by ` (`.
+- `heading-prefix`: Text before the version in its heading; default `## `. For `Version 1.2.3 (date)`, use `Version `;
+  for Towncrier's RST overline heading, use one space. The Action expects the version to be followed by ` (`.
 - `branch`: Protected release branch; default `main`.
 - `remote`: Git remote fetched for the freshness check; default `origin`.
 - `expected-sha`: Commit that preparation checked out. By default the Action uses `GITHUB_SHA`; set this when

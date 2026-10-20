@@ -15,7 +15,7 @@ on:
         required: true
         type: string
       heading-prefix:
-        description: Literal prefix of a release version heading; empty for reStructuredText
+        description: Literal prefix of a release version heading; one space for Towncrier RST overline headings
         default: "## "
         type: string
       artifact-base-url:
