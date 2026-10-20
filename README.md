@@ -44,7 +44,8 @@ after opening the PR updates the required check.
 file list through GitHub's API and never checks out PR code. Keep it in a separate `pull_request_target` workflow so the
 read-only changelog job does not receive Issues write access. The
 [caller in this repository](.github/workflows/label-bot-news.yaml) shows the permissions and events. Set `fragments` and
-`extension` for an RST repository:
+`extension` for an RST repository. `fragments` accepts comma-separated directories when a caller also recognizes a
+legacy fragment path:
 
 ```yaml
 - uses: tox-dev/github-workflows/label-bot-news@SHA

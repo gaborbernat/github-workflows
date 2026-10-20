@@ -2,7 +2,7 @@ name: Label bot pull request news
 description: Keep skip news on bot PRs without a changelog fragment
 inputs:
   fragments:
-    description: Directory containing changelog fragments
+    description: Comma-separated directories containing changelog fragments
     default: changelog.d
   extension:
     description: Fragment extension without the dot, either md or rst
@@ -31,12 +31,13 @@ runs:
         gh api --paginate "repos/$REPOSITORY/pulls/$PR_NUMBER/files" --jq '.[].filename' >"$RUNNER_TEMP/bot-pr-files"
         has_fragment=false
         mapfile -t files <"$RUNNER_TEMP/bot-pr-files"
+        read -ra directories <<<"${FRAGMENTS//,/ }"
         for path in "${files[@]}"; do
-          case "$path" in
-          "$FRAGMENTS"/*.*."$EXTENSION")
-            has_fragment=true
-            ;;
-          esac
+          for directory in "${directories[@]}"; do
+            case "$path" in
+            "$directory"/*.*."$EXTENSION") has_fragment=true ;;
+            esac
+          done
         done
         gh api "repos/$REPOSITORY/issues/$PR_NUMBER/labels" --jq '.[].name' >"$RUNNER_TEMP/bot-pr-labels"
         has_label=false
