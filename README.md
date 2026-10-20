@@ -41,7 +41,9 @@ The tag starts the caller's publisher. Keep PyPI trusted publishing in that top-
 Run `prek` on the tagged source before publication. Repositories with the standard `uv` wheel and sdist build can use
 `build-python-distribution` in both the tag publisher and the PR rehearsal. The
 [self-release workflow](.github/workflows/release.yaml) shows the GitHub Release path; callers keep their ecosystem
-uploads.
+uploads. The [read-only validation workflow](.github/workflows/validate-release.yaml) is called from both this
+repository's PR check and tag release. It builds a local candidate for PRs, checks the tagged source, and renders the
+Release body. The tag caller alone has a Contents write job that creates the GitHub Release.
 
 ## Prepare Towncrier release
 
