@@ -81,7 +81,7 @@ jobs:
           set -euo pipefail
           git checkout -B release-validation "$BASE_SHA"
           git merge --squash "$HEAD_SHA"
-          printf 'Validate the release pipeline on this pull request.\n' >"$FRAGMENTS/+validation-${PR_NUMBER}.bugfix.md"
+          printf 'Verify a user-visible release fix.\n' >"$FRAGMENTS/+validation-${PR_NUMBER}.bugfix.md"
           git add -A
           git -c user.name=release-validation -c user.email=release-validation@users.noreply.github.com commit -m "Validate release pipeline (#${PR_NUMBER})"
           git init --bare "$RUNNER_TEMP/rehearsal.git"
