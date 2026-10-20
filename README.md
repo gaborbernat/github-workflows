@@ -180,6 +180,18 @@ with `release-creator`, Towncrier, and `prek`. `python-version` defaults to `3.1
 root for `uv build`. `artifact-prefix` defaults to empty; set it while comparing this workflow with an existing PR
 rehearsal so the two jobs use distinct artifact names.
 
+For an RST changelog, use `format: none` and an empty `heading-prefix`. The workflow creates `.rst` test fragments from
+the changelog suffix and checks RST PR references in the assembled section:
+
+```yaml
+with:
+  changelog: docs/changelog.rst
+  fragments: docs/changelog
+  format: none
+  heading-prefix: ""
+  artifact-base-url: https://pypi.org/project/filelock/
+```
+
 The PR caller may also expose `workflow_dispatch` on a non-main branch. In that event the workflow finds the open PR for
 the branch, uses its base and author metadata, and performs the same local rehearsal. It fails when the branch has no
 open PR.

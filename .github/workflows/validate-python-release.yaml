@@ -14,6 +14,10 @@ on:
         description: Changelog format passed to prepare-towncrier
         required: true
         type: string
+      heading-prefix:
+        description: Literal prefix of a release version heading; empty for reStructuredText
+        default: "## "
+        type: string
       artifact-base-url:
         description: Ecosystem release URL without the version
         required: true
@@ -129,6 +133,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           FRAGMENTS: ${{ inputs.fragments }}
+          CHANGELOG: ${{ inputs.changelog }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -143,9 +148,17 @@ jobs:
           fi
           git checkout -B release-validation "$base_sha"
           git merge --squash "$head_sha"
-          printf 'Verify a user-visible release fix.\n' >"$FRAGMENTS/+validation-${PR_NUMBER}.bugfix.md"
-          test ! -e "$FRAGMENTS/${PR_NUMBER}.bugfix.md"
-          printf 'Verify a numbered release fix.\n' >"$FRAGMENTS/${PR_NUMBER}.bugfix.md"
+          case "$CHANGELOG" in
+          *.md) extension=md ;;
+          *.rst) extension=rst ;;
+          *)
+            echo "::error::unsupported changelog format: $CHANGELOG" >&2
+            exit 1
+            ;;
+          esac
+          printf 'Verify a user-visible release fix.\n' >"$FRAGMENTS/+validation-${PR_NUMBER}.bugfix.$extension"
+          test ! -e "$FRAGMENTS/${PR_NUMBER}.bugfix.$extension"
+          printf 'Verify a numbered release fix.\n' >"$FRAGMENTS/${PR_NUMBER}.bugfix.$extension"
           git add -A
           git -c user.name=release-validation -c user.email=release-validation@users.noreply.github.com commit -m "Validate release pipeline (#${PR_NUMBER})"
           git init --bare "$RUNNER_TEMP/rehearsal.git"
@@ -154,6 +167,7 @@ jobs:
           {
             echo "sha=$(git rev-parse HEAD)"
             echo "pr=$PR_NUMBER"
+            echo "extension=$extension"
             gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '"author=\(.user.login)\nauthor_type=\(.user.type)"'
           } >>"$GITHUB_OUTPUT"
       - name: Introduce an unsupported fragment
@@ -161,8 +175,9 @@ jobs:
         env:
           FRAGMENTS: ${{ inputs.fragments }}
           PR_NUMBER: ${{ steps.fixture.outputs.pr }}
+          EXTENSION: ${{ steps.fixture.outputs.extension }}
         run: |
-          git mv "$FRAGMENTS/+validation-${PR_NUMBER}.bugfix.md" "$FRAGMENTS/validation-${PR_NUMBER}.bugfix.md"
+          git mv "$FRAGMENTS/+validation-${PR_NUMBER}.bugfix.$EXTENSION" "$FRAGMENTS/validation-${PR_NUMBER}.bugfix.$EXTENSION"
           git -c user.name=release-validation -c user.email=release-validation@users.noreply.github.com commit -m "Validate fragment rejection"
           git push rehearsal HEAD:main
       - id: invalid_fragment
@@ -267,6 +282,7 @@ jobs:
           patch: ${{ runner.temp }}/release.patch
           changelog: ${{ inputs.changelog }}
           fragments: ${{ inputs.fragments }}
+          heading-prefix: ${{ inputs.heading-prefix }}
           remote: rehearsal
           expected-sha: "0000000000000000000000000000000000000000"
       - name: Check stale branch rejection
@@ -294,6 +310,7 @@ jobs:
           patch: ${{ runner.temp }}/invalid.patch
           changelog: ${{ inputs.changelog }}
           fragments: ${{ inputs.fragments }}
+          heading-prefix: ${{ inputs.heading-prefix }}
           remote: rehearsal
           expected-sha: ${{ steps.fixture.outputs.sha }}
       - name: Check unrelated path rejection
@@ -311,6 +328,7 @@ jobs:
           patch: ${{ runner.temp }}/release.patch
           changelog: ${{ inputs.changelog }}
           fragments: ${{ inputs.fragments }}
+          heading-prefix: ${{ inputs.heading-prefix }}
           remote: rehearsal
           expected-sha: ${{ steps.fixture.outputs.sha }}
       - name: Commit and tag the local candidate
