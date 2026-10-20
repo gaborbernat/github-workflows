@@ -268,16 +268,17 @@ jobs:
         run: |
           git -c user.name=release-validation -c user.email=release-validation@users.noreply.github.com commit -m "release $VERSION"
           git tag "$VERSION"
-      - if: github.event_name == 'push'
+      - name: Render tagged-source notes
+        if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         uses: tox-dev/github-workflows/render-release-notes@eebfb35f18a56bcb11ba6fe9fbfb478589253451
         with:
-          tag: ${{ github.ref_name }}
+          tag: ${{ steps.prepare.outputs.version || github.ref_name }}
           changelog: ${{ inputs.changelog }}
           repository: ${{ github.repository }}
-          artifact-url: ${{ inputs.artifact-base-url }}${{ github.ref_name }}/
+          artifact-url: ${{ inputs.artifact-base-url }}${{ steps.prepare.outputs.version || github.ref_name }}/
           artifact-label: ${{ inputs.artifact-label }}
           issue-role: ${{ inputs.issue-role }}
-          output: ${{ runner.temp }}/release-notes.md
+          output: ${{ runner.temp }}/${{ github.event_name == 'push' && 'release-notes.md' || 'tag-preview-notes.md' }}
       - uses: tox-dev/github-workflows/build-python-distribution@eebfb35f18a56bcb11ba6fe9fbfb478589253451
         with:
           lock: ${{ inputs.lock }}
@@ -334,16 +335,6 @@ jobs:
           issue-role: ${{ inputs.issue-role }}
           generated-notes: ${{ steps.metadata.outputs.path }}
           output: ${{ runner.temp }}/release-notes.md
-      - if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-        uses: tox-dev/github-workflows/render-release-notes@eebfb35f18a56bcb11ba6fe9fbfb478589253451
-        with:
-          tag: ${{ steps.prepare.outputs.version }}
-          changelog: ${{ inputs.changelog }}
-          repository: ${{ github.repository }}
-          artifact-url: ${{ inputs.artifact-base-url }}${{ steps.prepare.outputs.version }}/
-          artifact-label: ${{ inputs.artifact-label }}
-          issue-role: ${{ inputs.issue-role }}
-          output: ${{ runner.temp }}/tag-preview-notes.md
       - name: Inspect candidate artifacts
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         env:

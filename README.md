@@ -52,8 +52,8 @@ or an existing tag. A PR run squashes the proposed changes onto its base, adds n
 creates a commit and tag in the runner. It prepares and checks the changelog patch, runs `prek` on the candidate, builds
 the wheel and sdist, and checks both entries' links and author credits. It also checks rejection of unsupported or
 missing fragments, a dirty checkout, an existing release tag, a stale release branch, a patch with an unrelated file, an
-invalid tag, and a missing changelog. The local commit and tag never leave the runner. It renders the local tag both
-with the PR's contributor fixture and without metadata, matching the read-only tag validation path.
+invalid tag, and a missing changelog. The local commit and tag never leave the runner. The same tagged-source rendering
+step runs on the local PR tag and on a real tag; the PR also renders a separate copy with its contributor fixture.
 
 Call the same pinned workflow from the PR check and the tag publisher's build job:
 
