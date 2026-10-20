@@ -34,6 +34,8 @@ def test_fixture_creates_rst_fragments_without_directory(
     run(repository, "git", "add", ".")
     run(repository, "git", "commit", "-m", "Add reStructuredText changelog (#2)")
     head = run(repository, "git", "rev-parse", "HEAD").stdout.strip()
+    run(repository, "git", "config", "--unset", "user.name")
+    run(repository, "git", "config", "--unset", "user.email")
     server, environment = github_api
     if accepted:
         server.expect_request("/api/v3/repos/tox-dev/fixture/pulls/2").respond_with_json(
@@ -61,6 +63,8 @@ def test_fixture_creates_rst_fragments_without_directory(
             "GITHUB_REPOSITORY": "tox-dev/fixture",
             "GITHUB_OUTPUT": str(output),
             "RUNNER_TEMP": str(tmp_path),
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1",
         },
         capture_output=True,
         text=True,
