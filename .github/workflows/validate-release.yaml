@@ -24,6 +24,33 @@ jobs:
           uv venv --python 3.15 .venv
           uv pip sync --preview-features pylock --python .venv/bin/python pylock.toml
           echo "$PWD/.venv/bin" >>"$GITHUB_PATH"
+      - name: Check bot author is omitted
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(gh api repos/tox-dev/devpi-process/pulls/288 --jq .user.login)" = 'dependabot[bot]'
+          test "$(gh api repos/tox-dev/devpi-process/pulls/288 --jq .user.type)" = Bot
+          mkdir "$RUNNER_TEMP/bot-fragments"
+          printf 'Document a bot-owned dependency fix.\n' >"$RUNNER_TEMP/bot-fragments/+bot.bugfix.md"
+          printf '+bot.bugfix.md\tDependency update (#288)\n' >"$RUNNER_TEMP/commits.tsv"
+          release-creator fragments \
+            --directory "$RUNNER_TEMP/bot-fragments" \
+            --repository tox-dev/devpi-process \
+            --commit-map "$RUNNER_TEMP/commits.tsv" \
+            --resolve-authors
+          printf '## 1.0.0 (today)\n\n### Fixed\n\n- %s\n' \
+            "$(cat "$RUNNER_TEMP/bot-fragments/+bot.bugfix.md")" >"$RUNNER_TEMP/bot-changelog.md"
+          printf '* Dependency update by @dependabot[bot] in https://github.com/tox-dev/devpi-process/pull/288\n' \
+            >"$RUNNER_TEMP/bot-generated.md"
+          release-creator notes \
+            --changelog "$RUNNER_TEMP/bot-changelog.md" \
+            --tag 1.0.0 \
+            --repository tox-dev/devpi-process \
+            --generated-notes "$RUNNER_TEMP/bot-generated.md" >"$RUNNER_TEMP/bot-notes.md"
+          grep -Fq '[#288](https://github.com/tox-dev/devpi-process/pull/288)' "$RUNNER_TEMP/bot-notes.md"
+          ! grep -Fq '@dependabot' "$RUNNER_TEMP/bot-notes.md"
       - name: Rehearse a squash merge
         if: github.event_name == 'pull_request'
         id: fixture
@@ -245,4 +272,5 @@ jobs:
           path: |
             ${{ runner.temp }}/release.patch
             ${{ runner.temp }}/release-notes.md
+            ${{ runner.temp }}/bot-notes.md
           if-no-files-found: error
