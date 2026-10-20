@@ -99,11 +99,12 @@ The PR caller may also expose `workflow_dispatch` on a non-main branch. In that 
 the branch, uses its base and author metadata, and performs the same local rehearsal. It fails when the branch has no
 open PR.
 
-The job uploads `python-package-distributions` with the wheel and sdist, and `release-validation-notes` with the body
-rendered from the tagged source. On a PR it also uploads `release-dry-run` with the patch, assembled changelog, notes,
-contributor fixture, no-metadata tag preview, and distribution hashes. A tag run has no fixture, so its notes lack
-GitHub contributor metadata. The tag-only GitHub Release job must fetch generated notes with Contents write, rerender
-with `render-release-notes`, and create the Release after the ecosystem upload. PyPI OIDC stays in the caller's separate
+On a tag, it validates the changelog and notes before building, matching the existing caller order. The job uploads
+`python-package-distributions` with the wheel and sdist, and `release-validation-notes` with the body rendered from the
+tagged source. On a PR it also uploads `release-dry-run` with the patch, assembled changelog, notes, contributor
+fixture, no-metadata tag preview, and distribution hashes. A tag run has no fixture, so its notes lack GitHub
+contributor metadata. The tag-only GitHub Release job must fetch generated notes with Contents write, rerender with
+`render-release-notes`, and create the Release after the ecosystem upload. PyPI OIDC stays in the caller's separate
 `release` environment job:
 [PyPI does not support trusted publishing inside reusable workflows](https://docs.pypi.org/trusted-publishers/troubleshooting/#reusable-workflows-on-github).
 

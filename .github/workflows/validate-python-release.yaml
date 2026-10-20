@@ -195,6 +195,16 @@ jobs:
         run: |
           git -c user.name=release-validation -c user.email=release-validation@users.noreply.github.com commit -m "release $VERSION"
           git tag "$VERSION"
+      - if: github.event_name == 'push'
+        uses: tox-dev/github-workflows/render-release-notes@eebfb35f18a56bcb11ba6fe9fbfb478589253451
+        with:
+          tag: ${{ github.ref_name }}
+          changelog: ${{ inputs.changelog }}
+          repository: ${{ github.repository }}
+          artifact-url: ${{ inputs.artifact-base-url }}${{ github.ref_name }}/
+          artifact-label: ${{ inputs.artifact-label }}
+          issue-role: ${{ inputs.issue-role }}
+          output: ${{ runner.temp }}/release-notes.md
       - uses: tox-dev/github-workflows/build-python-distribution@eebfb35f18a56bcb11ba6fe9fbfb478589253451
         with:
           lock: ${{ inputs.lock }}
@@ -241,6 +251,7 @@ jobs:
           OUTCOME: ${{ steps.missing_changelog.outcome }}
         run: test "$OUTCOME" = failure
       - uses: tox-dev/github-workflows/render-release-notes@eebfb35f18a56bcb11ba6fe9fbfb478589253451
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         with:
           tag: ${{ steps.prepare.outputs.version || github.ref_name }}
           changelog: ${{ inputs.changelog }}
