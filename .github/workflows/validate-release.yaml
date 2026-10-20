@@ -131,6 +131,27 @@ jobs:
           changelog: CHANGELOG.md
           fragments: changelog.d
           expected-sha: ${{ steps.fixture.outputs.sha }}
+      - id: missing_token
+        if: github.event_name == 'pull_request'
+        name: Reject a missing App token
+        uses: $/commit-and-tag
+        continue-on-error: true
+        with:
+          version: ${{ steps.prepare.outputs.version }}
+          token: ""
+          app-slug: github-actions
+          message: release ${{ steps.prepare.outputs.version }}
+      - name: Check missing token left the remote unchanged
+        if: github.event_name == 'pull_request'
+        env:
+          OUTCOME: ${{ steps.missing_token.outcome }}
+          VERSION: ${{ steps.prepare.outputs.version }}
+          SOURCE_SHA: ${{ steps.fixture.outputs.sha }}
+        run: |
+          test "$OUTCOME" = failure
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(git ls-remote origin refs/heads/main | cut -f 1)" = "$SOURCE_SHA"
+          test -z "$(git ls-remote origin "refs/tags/$VERSION")"
       - id: invalid_tag
         if: github.event_name == 'pull_request'
         name: Reject an invalid release tag

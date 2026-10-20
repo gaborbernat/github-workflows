@@ -134,3 +134,17 @@ def test_commit_and_tag_keeps_remote_unchanged_on_rejection(
     assert result.returncode != 0
     assert run(repository, "git", "ls-remote", "origin", "refs/heads/main").stdout == before
     assert not run(repository, "git", "ls-remote", "origin", "refs/tags/0.2.0").stdout
+
+
+def test_commit_and_tag_rejects_missing_token_without_remote_change(
+    repository: Path, tmp_path: Path, action_scripts: Path
+) -> None:
+    assert action(repository, tmp_path, action_scripts, "prepare-towncrier", version="0.2.0").returncode == 0
+    run(repository, "git", "reset", "--hard", "HEAD")
+    assert action(repository, tmp_path, action_scripts, "validate-release-patch", version="0.2.0").returncode == 0
+    before = run(repository, "git", "ls-remote", "origin", "refs/heads/main").stdout
+    result = action(repository, tmp_path, action_scripts, "commit-and-tag", version="0.2.0", GH_TOKEN="")
+    assert result.returncode != 0
+    assert "repository App token and slug are required" in result.stderr
+    assert run(repository, "git", "ls-remote", "origin", "refs/heads/main").stdout == before
+    assert not run(repository, "git", "ls-remote", "origin", "refs/tags/0.2.0").stdout
