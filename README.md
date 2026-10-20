@@ -1,8 +1,8 @@
 # GitHub workflows
 
-Three composite Actions prepare a Towncrier release, verify its patch, and push an App-authored commit and tag. They run
-as steps in the caller's workflow. Each repository keeps its dispatch form, build, publisher, GitHub environment, and
-required check names.
+Four composite Actions prepare a Towncrier release, verify its patch, push an App-authored commit and tag, and build a
+Python wheel and sdist. They run as steps in the caller's workflow. Each repository keeps its dispatch form, publisher,
+GitHub environment, and required check names.
 
 ## Start with a caller
 
@@ -38,8 +38,10 @@ prepare-towncrier ── version + patch ──► upload artifact
 The tag starts the caller's publisher. Keep PyPI trusted publishing in that top-level workflow, in a separate job with
 `id-token: write`:
 [PyPI does not support trusted publishing inside reusable workflows](https://docs.pypi.org/trusted-publishers/troubleshooting/#reusable-workflows-on-github).
-Run `prek` on the tagged source before publication. The [self-release workflow](.github/workflows/release.yaml) shows
-the GitHub Release path; callers keep their ecosystem builds and uploads.
+Run `prek` on the tagged source before publication. Repositories with the standard `uv` wheel and sdist build can use
+`build-python-distribution` in both the tag publisher and the PR rehearsal. The
+[self-release workflow](.github/workflows/release.yaml) shows the GitHub Release path; callers keep their ecosystem
+uploads.
 
 ## Prepare Towncrier release
 
@@ -141,6 +143,33 @@ Contents write.
 
 **Output:** No named output. **Remote effect:** One new commit on `branch` and one tag at that commit. The App needs a
 branch and tag ruleset bypass. A stale branch, invalid tag, or ruleset rejection fails the push.
+
+## Build Python distribution
+
+`build-python-distribution` installs the caller's release group from `pylock.toml`, runs `prek` on the tagged tree, then
+builds a wheel and sdist with `uv`. Call it after `actions/checkout` and `astral-sh/setup-uv`. The caller verifies the
+tag and changelog section before this Action. Use the same Action and inputs after the local tag in the PR rehearsal;
+this executes the build steps used by the tag publisher without publishing the artifacts.
+
+```yaml
+  - uses: tox-dev/github-workflows/build-python-distribution@SHA
+    with:
+      lock: pylock.toml
+      python-version: '3.15'
+      source: .
+      out-dir: dist
+```
+
+- `lock`: Path to the caller's `pylock.toml`; default `pylock.toml`. Its `release` group must contain `prek` and every
+  package needed by the caller's hooks.
+- `python-version`: Managed Python used for release tools and the build; default `3.15`.
+- `source`: Source directory passed to `uv build`; default `.`.
+- `out-dir`: Directory for the wheel and sdist; default `dist`. The caller uploads files from this directory.
+
+**Output:** No named output. **Working-tree effect:** Creates a release-tool environment under `runner.temp` and writes
+a wheel and sdist to `out-dir`. The checkout must be clean before the Action starts; it fails if `prek` fails or changes
+a tracked or untracked source file. Use a separate build path for repositories whose build command differs from
+`uv build --sdist --wheel`.
 
 ## Check a caller before switching
 

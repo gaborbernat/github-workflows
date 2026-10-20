@@ -17,6 +17,7 @@ def action_scripts(tmp_path_factory: pytest.TempPathFactory) -> Path:
         "prepare-towncrier",
         "validate-release-patch",
         "commit-and-tag",
+        "build-python-distribution",
     ):
         action = yaml.safe_load((source / action_name / "action.yml").read_text())
         for index, step in enumerate(action["runs"]["steps"]):

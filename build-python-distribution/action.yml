@@ -1,0 +1,48 @@
+name: Build Python distribution
+description: Check the tagged source with locked tools, then build a wheel and sdist
+inputs:
+  lock:
+    description: pylock.toml containing the release dependency group
+    default: pylock.toml
+  python-version:
+    description: Python version for release tooling and uv build
+    default: "3.15"
+  source:
+    description: Distribution source directory
+    default: .
+  out-dir:
+    description: Directory for the wheel and sdist
+    default: dist
+runs:
+  using: composite
+  steps:
+    - name: Install locked release tools
+      shell: bash
+      env:
+        LOCK: ${{ inputs.lock }}
+        PYTHON_VERSION: ${{ inputs.python-version }}
+      run: |
+        set -euo pipefail
+        uv venv --python "$PYTHON_VERSION" "$RUNNER_TEMP/build-tools"
+        uv pip sync --preview-features pylock --python "$RUNNER_TEMP/build-tools/bin/python" --group release "$LOCK"
+    - name: Check tagged source
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [[ -n $(git status --porcelain) ]]; then
+          echo '::error::tagged source is dirty' >&2
+          exit 1
+        fi
+        "$RUNNER_TEMP/build-tools/bin/prek" run --all-files
+        if [[ -n $(git status --porcelain) ]]; then
+          echo '::error::prek changed the tagged source' >&2
+          exit 1
+        fi
+    - name: Build wheel and sdist
+      shell: bash
+      env:
+        PYTHON_VERSION: ${{ inputs.python-version }}
+        SOURCE: ${{ inputs.source }}
+        OUT_DIR: ${{ inputs.out-dir }}
+      run: |
+        uv build --python "$PYTHON_VERSION" --python-preference only-managed --sdist --wheel "$SOURCE" --out-dir "$OUT_DIR"
