@@ -159,22 +159,9 @@ jobs:
         run: |
           git tag --list | release-creator tags "$TAG"
           prek run --all-files
-      - name: Fetch contributor metadata
-        if: github.event_name == 'push'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          previous=$(git tag --list | release-creator tags "$TAG" --previous)
-          args=(-f "tag_name=$TAG")
-          if [[ -n "$previous" ]]; then
-            args+=(-f "previous_tag_name=$previous")
-          fi
-          gh api -X POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" "${args[@]}" --jq .body \
-            >"$RUNNER_TEMP/generated-notes.md"
       - name: Prepare generated notes fixture
         if: github.event_name == 'pull_request'
+        id: metadata
         env:
           VERSION: ${{ steps.prepare.outputs.version }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -183,12 +170,13 @@ jobs:
           test -n "$(git ls-remote origin "refs/tags/$VERSION")"
           printf '* Validate release pipeline by @%s in https://github.com/%s/pull/%s\n' \
             "$PR_AUTHOR" "$GITHUB_REPOSITORY" "$PR_NUMBER" >"$RUNNER_TEMP/generated-notes.md"
+          echo "path=$RUNNER_TEMP/generated-notes.md" >>"$GITHUB_OUTPUT"
       - uses: $/render-release-notes
         with:
           tag: ${{ steps.prepare.outputs.version || github.ref_name }}
           changelog: CHANGELOG.md
           repository: ${{ github.repository }}
-          generated-notes: ${{ runner.temp }}/generated-notes.md
+          generated-notes: ${{ steps.metadata.outputs.path }}
           output: ${{ runner.temp }}/release-notes.md
       - name: Inspect tagged notes
         if: github.event_name == 'pull_request'
