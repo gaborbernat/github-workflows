@@ -152,6 +152,28 @@ jobs:
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
           test "$(git ls-remote origin refs/heads/main | cut -f 1)" = "$SOURCE_SHA"
           test -z "$(git ls-remote origin "refs/tags/$VERSION")"
+      - id: missing_key
+        if: github.event_name == 'pull_request'
+        name: Reject a missing App private key
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        continue-on-error: true
+        with:
+          app-id: "1"
+          private-key: ""
+          owner: tox-dev
+          repositories: github-workflows
+          permission-contents: read
+      - name: Check missing key left the remote unchanged
+        if: github.event_name == 'pull_request'
+        env:
+          OUTCOME: ${{ steps.missing_key.outcome }}
+          VERSION: ${{ steps.prepare.outputs.version }}
+          SOURCE_SHA: ${{ steps.fixture.outputs.sha }}
+        run: |
+          test "$OUTCOME" = failure
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(git ls-remote origin refs/heads/main | cut -f 1)" = "$SOURCE_SHA"
+          test -z "$(git ls-remote origin "refs/tags/$VERSION")"
       - id: invalid_tag
         if: github.event_name == 'pull_request'
         name: Reject an invalid release tag
