@@ -50,7 +50,9 @@ Release body. The tag caller alone has a Contents write job that creates the Git
 `validate-python-release.yaml` runs the shared Towncrier, package build, and note-rendering path from an exact PR head
 or an existing tag. A PR run squashes the proposed changes onto its base, adds one synthetic bug-fix fragment, and
 creates a commit and tag in the runner. It prepares and checks the changelog patch, runs `prek` on the candidate, builds
-the wheel and sdist, and checks the rendered links and author credit. The local commit and tag never leave the runner.
+the wheel and sdist, and checks the rendered links and author credit. It also checks rejection of unsupported fragments,
+a dirty checkout, a stale release branch, an invalid tag, and a missing changelog. The local commit and tag never leave
+the runner.
 
 Call the same pinned workflow from the PR check and the tag publisher's build job:
 

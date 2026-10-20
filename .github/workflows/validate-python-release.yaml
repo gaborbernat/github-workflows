@@ -88,6 +88,54 @@ jobs:
           git remote add rehearsal "$RUNNER_TEMP/rehearsal.git"
           git push rehearsal HEAD:main
           echo "sha=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
+      - name: Introduce an unsupported fragment
+        if: github.event_name == 'pull_request'
+        env:
+          FRAGMENTS: ${{ inputs.fragments }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          git mv "$FRAGMENTS/+validation-${PR_NUMBER}.bugfix.md" "$FRAGMENTS/validation-${PR_NUMBER}.bugfix.md"
+          git -c user.name=release-validation -c user.email=release-validation@users.noreply.github.com commit -m "Validate fragment rejection"
+          git push rehearsal HEAD:main
+      - id: invalid_fragment
+        if: github.event_name == 'pull_request'
+        name: Reject an unsupported fragment
+        uses: tox-dev/github-workflows/prepare-towncrier@eebfb35f18a56bcb11ba6fe9fbfb478589253451
+        continue-on-error: true
+        with:
+          changelog: ${{ inputs.changelog }}
+          fragments: ${{ inputs.fragments }}
+          format: ${{ inputs.format }}
+          patch: ${{ runner.temp }}/release.patch
+      - name: Check fragment rejection
+        if: github.event_name == 'pull_request'
+        env:
+          OUTCOME: ${{ steps.invalid_fragment.outcome }}
+          SOURCE_SHA: ${{ steps.fixture.outputs.sha }}
+        run: |
+          test "$OUTCOME" = failure
+          git reset --hard "$SOURCE_SHA"
+          git push --force rehearsal HEAD:main
+      - name: Dirty the release checkout
+        if: github.event_name == 'pull_request'
+        run: touch untracked-release-file
+      - id: dirty_prepare
+        if: github.event_name == 'pull_request'
+        name: Reject a dirty release checkout
+        uses: tox-dev/github-workflows/prepare-towncrier@eebfb35f18a56bcb11ba6fe9fbfb478589253451
+        continue-on-error: true
+        with:
+          changelog: ${{ inputs.changelog }}
+          fragments: ${{ inputs.fragments }}
+          format: ${{ inputs.format }}
+          patch: ${{ runner.temp }}/release.patch
+      - name: Check dirty checkout rejection
+        if: github.event_name == 'pull_request'
+        env:
+          OUTCOME: ${{ steps.dirty_prepare.outcome }}
+        run: |
+          test "$OUTCOME" = failure
+          rm untracked-release-file
       - id: prepare
         if: github.event_name == 'pull_request'
         uses: tox-dev/github-workflows/prepare-towncrier@eebfb35f18a56bcb11ba6fe9fbfb478589253451
@@ -99,6 +147,23 @@ jobs:
       - name: Restore release candidate
         if: github.event_name == 'pull_request'
         run: git reset --hard HEAD
+      - id: stale_validate
+        if: github.event_name == 'pull_request'
+        name: Reject a stale release branch
+        uses: tox-dev/github-workflows/validate-release-patch@eebfb35f18a56bcb11ba6fe9fbfb478589253451
+        continue-on-error: true
+        with:
+          version: ${{ steps.prepare.outputs.version }}
+          patch: ${{ runner.temp }}/release.patch
+          changelog: ${{ inputs.changelog }}
+          fragments: ${{ inputs.fragments }}
+          remote: rehearsal
+          expected-sha: "0000000000000000000000000000000000000000"
+      - name: Check stale branch rejection
+        if: github.event_name == 'pull_request'
+        env:
+          OUTCOME: ${{ steps.stale_validate.outcome }}
+        run: test "$OUTCOME" = failure
       - if: github.event_name == 'pull_request'
         uses: tox-dev/github-workflows/validate-release-patch@eebfb35f18a56bcb11ba6fe9fbfb478589253451
         with:
@@ -130,6 +195,36 @@ jobs:
           printf '* Validate release pipeline by @%s in https://github.com/%s/pull/%s\n' \
             "$PR_AUTHOR" "$GITHUB_REPOSITORY" "$PR_NUMBER" >"$RUNNER_TEMP/generated-notes.md"
           echo "path=$RUNNER_TEMP/generated-notes.md" >>"$GITHUB_OUTPUT"
+      - id: invalid_tag
+        if: github.event_name == 'pull_request'
+        name: Reject an invalid release tag
+        uses: tox-dev/github-workflows/render-release-notes@eebfb35f18a56bcb11ba6fe9fbfb478589253451
+        continue-on-error: true
+        with:
+          tag: bad tag
+          changelog: ${{ inputs.changelog }}
+          repository: ${{ github.repository }}
+          output: ${{ runner.temp }}/invalid-tag-notes.md
+      - name: Check invalid tag rejection
+        if: github.event_name == 'pull_request'
+        env:
+          OUTCOME: ${{ steps.invalid_tag.outcome }}
+        run: test "$OUTCOME" = failure
+      - id: missing_changelog
+        if: github.event_name == 'pull_request'
+        name: Reject a missing changelog
+        uses: tox-dev/github-workflows/render-release-notes@eebfb35f18a56bcb11ba6fe9fbfb478589253451
+        continue-on-error: true
+        with:
+          tag: ${{ steps.prepare.outputs.version }}
+          changelog: missing-changelog.md
+          repository: ${{ github.repository }}
+          output: ${{ runner.temp }}/missing-changelog-notes.md
+      - name: Check missing changelog rejection
+        if: github.event_name == 'pull_request'
+        env:
+          OUTCOME: ${{ steps.missing_changelog.outcome }}
+        run: test "$OUTCOME" = failure
       - uses: tox-dev/github-workflows/render-release-notes@eebfb35f18a56bcb11ba6fe9fbfb478589253451
         with:
           tag: ${{ steps.prepare.outputs.version || github.ref_name }}
