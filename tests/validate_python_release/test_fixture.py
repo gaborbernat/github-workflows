@@ -4,13 +4,28 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 from conftest import run
 from pytest_httpserver import HTTPServer
 
 
+@pytest.mark.parametrize(
+    ("fixture_issue", "issue_role", "accepted"),
+    [
+        pytest.param("", "issue", True, id="without-issue"),
+        pytest.param("31", "issue", True, id="with-issue"),
+        pytest.param("invalid", "issue", False, id="invalid-issue"),
+        pytest.param("31", "pull", False, id="wrong-role"),
+    ],
+)
 def test_fixture_creates_rst_fragments_without_directory(
-    repository: Path, tmp_path: Path, github_api: tuple[HTTPServer, dict[str, str]]
+    repository: Path,
+    tmp_path: Path,
+    github_api: tuple[HTTPServer, dict[str, str]],
+    fixture_issue: str,
+    issue_role: str,
+    accepted: bool,
 ) -> None:
     base = run(repository, "git", "rev-list", "--max-parents=0", "HEAD").stdout.strip()
     changelog = repository / "docs/changelog.rst"
@@ -20,9 +35,10 @@ def test_fixture_creates_rst_fragments_without_directory(
     run(repository, "git", "commit", "-m", "Add reStructuredText changelog (#2)")
     head = run(repository, "git", "rev-parse", "HEAD").stdout.strip()
     server, environment = github_api
-    server.expect_request("/api/v3/repos/tox-dev/fixture/pulls/2").respond_with_json(
-        {"user": {"login": "maintainer", "type": "User"}}
-    )
+    if accepted:
+        server.expect_request("/api/v3/repos/tox-dev/fixture/pulls/2").respond_with_json(
+            {"user": {"login": "maintainer", "type": "User"}}
+        )
     workflow = yaml.safe_load(
         (Path(__file__).resolve().parents[2] / ".github/workflows/validate-python-release.yaml").read_text()
     )
@@ -39,6 +55,8 @@ def test_fixture_creates_rst_fragments_without_directory(
             "PR_NUMBER": "2",
             "FRAGMENTS": "docs/changelog",
             "CHANGELOG": "docs/changelog.rst",
+            "FIXTURE_ISSUE": fixture_issue,
+            "ISSUE_ROLE": issue_role,
             "GITHUB_SHA": head,
             "GITHUB_REPOSITORY": "tox-dev/fixture",
             "GITHUB_OUTPUT": str(output),
@@ -48,9 +66,15 @@ def test_fixture_creates_rst_fragments_without_directory(
         text=True,
         check=False,
     )
-    assert result.returncode == 0, result.stderr
+    assert (result.returncode == 0) == accepted
+    if not accepted:
+        assert "fixture-issue requires an RST changelog, issue role, and numeric issue" in result.stderr
+        return
     assert sorted(path.name for path in (repository / "docs/changelog").iterdir()) == [
         "+validation-2.bugfix.rst",
         "2.bugfix.rst",
     ]
     assert "extension=rst" in output.read_text()
+    assert (":issue:`31`" in (repository / "docs/changelog/+validation-2.bugfix.rst").read_text()) == bool(
+        fixture_issue
+    )

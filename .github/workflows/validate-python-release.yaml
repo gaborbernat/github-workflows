@@ -30,6 +30,10 @@ on:
         description: Target for reStructuredText issue roles
         default: issue
         type: string
+      fixture-issue:
+        description: Issue number to link in a synthetic reStructuredText release entry
+        default: ""
+        type: string
       lock:
         description: Release-tool pylock.toml path
         default: pylock.toml
@@ -134,6 +138,8 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           FRAGMENTS: ${{ inputs.fragments }}
           CHANGELOG: ${{ inputs.changelog }}
+          FIXTURE_ISSUE: ${{ inputs.fixture-issue }}
+          ISSUE_ROLE: ${{ inputs.issue-role }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -157,7 +163,16 @@ jobs:
             ;;
           esac
           mkdir -p "$FRAGMENTS"
-          printf 'Verify a user-visible release fix.\n' >"$FRAGMENTS/+validation-${PR_NUMBER}.bugfix.$extension"
+          if [[ -n "$FIXTURE_ISSUE" ]]; then
+            if [[ "$extension" != rst || "$ISSUE_ROLE" != issue || "$FIXTURE_ISSUE" == *[!0-9]* ]]; then
+              echo '::error::fixture-issue requires an RST changelog, issue role, and numeric issue' >&2
+              exit 1
+            fi
+            printf "Verify a user-visible release fix for :issue:\`%s\`.\n" "$FIXTURE_ISSUE" \
+              >"$FRAGMENTS/+validation-${PR_NUMBER}.bugfix.$extension"
+          else
+            printf 'Verify a user-visible release fix.\n' >"$FRAGMENTS/+validation-${PR_NUMBER}.bugfix.$extension"
+          fi
           test ! -e "$FRAGMENTS/${PR_NUMBER}.bugfix.$extension"
           printf 'Verify a numbered release fix.\n' >"$FRAGMENTS/${PR_NUMBER}.bugfix.$extension"
           git add -A
@@ -412,11 +427,17 @@ jobs:
           PR_NUMBER: ${{ steps.fixture.outputs.pr }}
           PR_AUTHOR: ${{ steps.fixture.outputs.author }}
           PR_AUTHOR_TYPE: ${{ steps.fixture.outputs.author_type }}
+          FIXTURE_ISSUE: ${{ inputs.fixture-issue }}
           CHANGELOG: ${{ inputs.changelog }}
         run: |
           set -euo pipefail
           test "$(grep -c '^\*\*Full Changelog\*\*:' "$RUNNER_TEMP/release-notes.md")" -eq 1
           grep -Fq "[#${PR_NUMBER}](https://github.com/${GITHUB_REPOSITORY}/pull/${PR_NUMBER})" "$RUNNER_TEMP/release-notes.md"
+          if [[ -n "$FIXTURE_ISSUE" ]]; then
+            grep -Fq "[#${FIXTURE_ISSUE}](https://github.com/${GITHUB_REPOSITORY}/issues/${FIXTURE_ISSUE})" \
+              "$RUNNER_TEMP/release-notes.md"
+            grep -Fq ":issue:\`${FIXTURE_ISSUE}\`" "$CHANGELOG"
+          fi
           numbered=$(grep -F 'Verify a numbered release fix' "$RUNNER_TEMP/release-notes.md")
           test "$(grep -oF "https://github.com/${GITHUB_REPOSITORY}/pull/${PR_NUMBER}" <<<"$numbered" | wc -l)" -eq 1
           changelog_numbered=$(grep -F -A3 'Verify a numbered release fix' "$CHANGELOG")

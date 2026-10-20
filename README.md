@@ -211,7 +211,9 @@ root for `uv build`. `artifact-prefix` defaults to empty; set it while comparing
 rehearsal so the two jobs use distinct artifact names.
 
 For an RST changelog, use `format: none` and an empty `heading-prefix`. The workflow creates `.rst` test fragments from
-the changelog suffix and checks RST PR references in the assembled section:
+the changelog suffix and checks RST PR references in the assembled section. If the repository uses `:issue:` roles, set
+`fixture-issue` to an existing issue number. The PR rehearsal then checks its GitHub issue link in the rendered notes.
+The input has no effect on an existing tag:
 
 ```yaml
 with:
@@ -219,6 +221,7 @@ with:
   fragments: docs/changelog
   format: none
   heading-prefix: ""
+  fixture-issue: "31"
   artifact-base-url: https://pypi.org/project/filelock/
 ```
 
