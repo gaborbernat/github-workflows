@@ -270,9 +270,7 @@ def test_prepare_formats_markdown(repository: Path, tmp_path: Path, action_scrip
 def test_prepare_formats_rst(repository: Path, tmp_path: Path, action_scripts: Path) -> None:
     project = repository / "pyproject.toml"
     project.write_text(
-        project.read_text()
-        .replace("CHANGELOG.md", "CHANGELOG.rst")
-        .replace("template.jinja2", "template.rst.jinja2")
+        project.read_text().replace("CHANGELOG.md", "CHANGELOG.rst").replace("template.jinja2", "template.rst.jinja2")
     )
     (repository / "CHANGELOG.md").rename(repository / "CHANGELOG.rst")
     (repository / "CHANGELOG.rst").write_text("Changelog\n=========\n\n.. towncrier release notes start\n")
