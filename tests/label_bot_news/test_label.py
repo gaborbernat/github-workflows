@@ -8,22 +8,41 @@ from pytest_httpserver import HTTPServer
 
 
 @pytest.mark.parametrize(
-    ("files", "labels", "write_method", "fragment_dirs"),
+    ("files", "labels", "write_method", "fragment_dirs", "extension"),
     [
-        pytest.param([], [], "POST", "changelog.d", id="add"),
-        pytest.param([], [{"name": "skip news"}], None, "changelog.d", id="already-labeled"),
+        pytest.param([], [], "POST", "changelog.d", "md", id="add"),
+        pytest.param([], [{"name": "skip news"}], None, "changelog.d", "md", id="already-labeled"),
         pytest.param(
-            [{"filename": "changelog.d/+fix.bugfix.md"}], [{"name": "skip news"}], "DELETE", "changelog.d", id="remove"
+            [{"filename": "changelog.d/+fix.bugfix.md"}],
+            [{"name": "skip news"}],
+            "DELETE",
+            "changelog.d",
+            "md",
+            id="remove",
         ),
         pytest.param(
-            [{"filename": "changelog.d/+fix.bugfix.md"}], [], None, "changelog.d", id="fragment-without-label"
+            [{"filename": "changelog.d/+fix.bugfix.md"}],
+            [],
+            None,
+            "changelog.d",
+            "md",
+            id="fragment-without-label",
         ),
         pytest.param(
             [{"filename": "docs/changelog.d/+fix.bugfix.md"}],
             [{"name": "skip news"}],
             "DELETE",
             "changelog.d,docs/changelog.d",
+            "md",
             id="legacy-fragment-path",
+        ),
+        pytest.param(
+            [{"filename": "docs/changelog/+fix.bugfix.rst"}],
+            [{"name": "skip news"}],
+            "DELETE",
+            "docs/changelog",
+            "rst",
+            id="rst-fragment-removes-label",
         ),
     ],
 )
@@ -36,6 +55,7 @@ def test_label_bot_news_updates_label(
     labels: list[dict[str, str]],
     write_method: str | None,
     fragment_dirs: str,
+    extension: str,
 ) -> None:
     server, environment = github_api
     prefix = "/api/v3/repos/tox-dev/fixture"
@@ -54,7 +74,7 @@ def test_label_bot_news_updates_label(
         PR_NUMBER="1",
         BOT_AUTHOR="true",
         FRAGMENTS=fragment_dirs,
-        EXTENSION="md",
+        EXTENSION=extension,
         RUNNER_TEMP=str(tmp_path),
         **environment,
     )
