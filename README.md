@@ -51,9 +51,9 @@ Release body. The tag caller alone has a Contents write job that creates the Git
 or an existing tag. A PR run squashes the proposed changes onto its base, adds one synthetic bug-fix fragment, and
 creates a commit and tag in the runner. It prepares and checks the changelog patch, runs `prek` on the candidate, builds
 the wheel and sdist, and checks the rendered links and author credit. It also checks rejection of unsupported fragments,
-a dirty checkout, a stale release branch, an invalid tag, and a missing changelog. The local commit and tag never leave
-the runner. It renders the local tag both with the PR's contributor fixture and without metadata, matching the read-only
-tag validation path.
+a dirty checkout, an existing release tag, a stale release branch, a patch with an unrelated file, an invalid tag, and a
+missing changelog. The local commit and tag never leave the runner. It renders the local tag both with the PR's
+contributor fixture and without metadata, matching the read-only tag validation path.
 
 Call the same pinned workflow from the PR check and the tag publisher's build job:
 

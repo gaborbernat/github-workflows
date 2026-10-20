@@ -161,6 +161,30 @@ jobs:
       - name: Restore release candidate
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         run: git reset --hard HEAD
+      - name: Make the candidate tag stale
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        env:
+          VERSION: ${{ steps.prepare.outputs.version }}
+        run: git tag "$VERSION"
+      - id: stale_tag
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        name: Reject an existing release tag
+        uses: tox-dev/github-workflows/prepare-towncrier@eebfb35f18a56bcb11ba6fe9fbfb478589253451
+        continue-on-error: true
+        with:
+          version: ${{ steps.prepare.outputs.version }}
+          changelog: ${{ inputs.changelog }}
+          fragments: ${{ inputs.fragments }}
+          format: ${{ inputs.format }}
+          patch: ${{ runner.temp }}/stale-tag.patch
+      - name: Check stale tag rejection
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        env:
+          OUTCOME: ${{ steps.stale_tag.outcome }}
+          VERSION: ${{ steps.prepare.outputs.version }}
+        run: |
+          test "$OUTCOME" = failure
+          git tag -d "$VERSION"
       - id: stale_validate
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         name: Reject a stale release branch
@@ -178,6 +202,36 @@ jobs:
         env:
           OUTCOME: ${{ steps.stale_validate.outcome }}
         run: test "$OUTCOME" = failure
+      - name: Add an unrelated file to the release patch
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        run: |
+          printf 'invalid patch probe\n' >release-validation-unexpected.txt
+          git add -N release-validation-unexpected.txt
+          git diff --binary -- release-validation-unexpected.txt >"$RUNNER_TEMP/unexpected-path.patch"
+          git reset -- release-validation-unexpected.txt
+          rm release-validation-unexpected.txt
+          cat "$RUNNER_TEMP/release.patch" "$RUNNER_TEMP/unexpected-path.patch" >"$RUNNER_TEMP/invalid.patch"
+          git apply --check "$RUNNER_TEMP/invalid.patch"
+      - id: invalid_patch
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        name: Reject a release patch with an unrelated file
+        uses: tox-dev/github-workflows/validate-release-patch@eebfb35f18a56bcb11ba6fe9fbfb478589253451
+        continue-on-error: true
+        with:
+          version: ${{ steps.prepare.outputs.version }}
+          patch: ${{ runner.temp }}/invalid.patch
+          changelog: ${{ inputs.changelog }}
+          fragments: ${{ inputs.fragments }}
+          remote: rehearsal
+          expected-sha: ${{ steps.fixture.outputs.sha }}
+      - name: Check unrelated path rejection
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        env:
+          OUTCOME: ${{ steps.invalid_patch.outcome }}
+        run: |
+          test "$OUTCOME" = failure
+          git diff --cached --name-only | grep -Fxq release-validation-unexpected.txt
+          git reset --hard HEAD
       - if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         uses: tox-dev/github-workflows/validate-release-patch@eebfb35f18a56bcb11ba6fe9fbfb478589253451
         with:
