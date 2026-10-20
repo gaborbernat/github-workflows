@@ -38,6 +38,10 @@ on:
         description: Package source directory
         default: .
         type: string
+      artifact-prefix:
+        description: Prefix for artifacts when comparing two release paths in one run
+        default: ""
+        type: string
 permissions:
   contents: read
 jobs:
@@ -163,18 +167,18 @@ jobs:
           cp "$CHANGELOG" "$RUNNER_TEMP/changelog"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: python-package-distributions
+          name: ${{ inputs.artifact-prefix }}python-package-distributions
           path: dist/*
           if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: release-validation-notes
+          name: ${{ inputs.artifact-prefix }}release-validation-notes
           path: ${{ runner.temp }}/release-notes.md
           if-no-files-found: error
       - if: github.event_name == 'pull_request'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: release-dry-run
+          name: ${{ inputs.artifact-prefix }}release-dry-run
           path: |
             ${{ runner.temp }}/release.patch
             ${{ runner.temp }}/release-notes.md

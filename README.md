@@ -57,7 +57,7 @@ Call the same pinned workflow from the PR check and the tag publisher's build jo
 ```yaml
 release-dry-run:
   if: github.event_name == 'pull_request'
-  uses:
+  uses: >-
     tox-dev/github-workflows/.github/workflows/validate-python-release.yaml@SHA
   permissions:
     contents: read
@@ -71,7 +71,7 @@ release-dry-run:
 
 ```yaml
 build:
-  uses:
+  uses: >-
     tox-dev/github-workflows/.github/workflows/validate-python-release.yaml@SHA
   permissions:
     contents: read
@@ -89,7 +89,8 @@ ends just before the version; the workflow appends `1.2.3/` for tag `1.2.3`. Set
 path. `artifact-label` changes the link text from `PyPI release`; `issue-role` selects whether reStructuredText
 `:issue:` references link to issues or pull requests. `lock` defaults to `pylock.toml` and must have a `release` group
 with `release-creator`, Towncrier, and `prek`. `python-version` defaults to `3.15`; `source` defaults to the repository
-root for `uv build`.
+root for `uv build`. `artifact-prefix` defaults to empty; set it while comparing this workflow with an existing PR
+rehearsal so the two jobs use distinct artifact names.
 
 The job uploads `python-package-distributions` with the wheel and sdist, and `release-validation-notes` with the body
 rendered from the tagged source. On a PR it also uploads `release-dry-run` with the patch, assembled changelog, notes,
