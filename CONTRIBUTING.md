@@ -31,9 +31,8 @@ coverage of those blocks. The PR rehearsal also executes the composite Actions o
 ## Change an Action
 
 Keep its `action.yml` inputs and step behavior in sync with the [README](README.md). The PR `release-dry-run` job
-invokes the release preparation Actions, checks rejected inputs, and uploads the patch and rendered GitHub notes.
-Inspect its steps and artifacts when changing input mapping or release output. Add a runner failure case when changing
-input validation.
+invokes the release Actions, checks rejected inputs, and uploads the patch and rendered GitHub notes. Inspect its steps
+and artifacts when changing input mapping or release output. Add a runner failure case when changing input validation.
 
 The release preparation and Python build steps must work without a write token. Keep custom build and publisher steps in
 the caller. Do not add a secret to an Action input when a short-lived, repository-scoped token is sufficient.

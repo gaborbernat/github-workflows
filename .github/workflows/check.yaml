@@ -232,23 +232,29 @@ jobs:
           token: ${{ github.token }}
           app-slug: github-actions
           message: release ${{ steps.prepare.outputs.version }}
-      - name: Render tagged notes
+      - name: Prepare generated notes fixture
         env:
           VERSION: ${{ steps.prepare.outputs.version }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          test -n "$(git ls-remote origin "refs/tags/$VERSION")"
+          printf '* Validate release pipeline by @%s in https://github.com/%s/pull/%s\n' \
+            "$PR_AUTHOR" "$GITHUB_REPOSITORY" "$PR_NUMBER" >"$RUNNER_TEMP/generated-notes.md"
+      - uses: $/render-release-notes
+        with:
+          tag: ${{ steps.prepare.outputs.version }}
+          changelog: CHANGELOG.md
+          repository: ${{ github.repository }}
+          generated-notes: ${{ runner.temp }}/generated-notes.md
+          output: ${{ runner.temp }}/release-notes.md
+      - name: Inspect tagged notes
+        env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           PR_AUTHOR_TYPE: ${{ github.event.pull_request.user.type }}
         run: |
           set -euo pipefail
-          test -n "$(git ls-remote origin "refs/tags/$VERSION")"
-          previous=$(git tag --list | release-creator tags "$VERSION" --previous)
-          args=()
-          if [[ -n "$previous" ]]; then
-            args+=(--previous "$previous")
-          fi
-          release-creator notes --changelog CHANGELOG.md --tag "$VERSION" \
-            --repository "$GITHUB_REPOSITORY" "${args[@]}" \
-            >"$RUNNER_TEMP/release-notes.md"
           test -s "$RUNNER_TEMP/release-notes.md"
           grep -Fq "[#${PR_NUMBER}](https://github.com/${GITHUB_REPOSITORY}/pull/${PR_NUMBER})" \
             "$RUNNER_TEMP/release-notes.md"

@@ -18,6 +18,7 @@ def action_scripts(tmp_path_factory: pytest.TempPathFactory) -> Path:
         "validate-release-patch",
         "commit-and-tag",
         "build-python-distribution",
+        "render-release-notes",
     ):
         action = yaml.safe_load((source / action_name / "action.yml").read_text())
         for index, step in enumerate(action["runs"]["steps"]):
@@ -85,6 +86,10 @@ def action(
             "BRANCH": "main",
             "REMOTE": "origin",
             "ANNOTATED": "false",
+            "ARTIFACT_URL": "",
+            "ARTIFACT_LABEL": "PyPI release",
+            "GENERATED_NOTES": "",
+            "ISSUE_ROLE": "issue",
         }
         | extra_env
     )
@@ -115,6 +120,8 @@ def action(
             return subprocess.CompletedProcess(command, result.returncode, "".join(stdout), "".join(stderr))
         if name == "prepare-towncrier" and script.name == "prepare-towncrier-0.sh":
             environment["VERSION"] = (tmp_path / "output").read_text().split("version=", 1)[1].splitlines()[0]
+        if name == "render-release-notes" and script.name == "render-release-notes-0.sh":
+            environment["PREVIOUS"] = (tmp_path / "output").read_text().split("previous=", 1)[1].splitlines()[0]
     return subprocess.CompletedProcess(command, 0, "".join(stdout), "".join(stderr))
 
 

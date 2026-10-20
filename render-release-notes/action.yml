@@ -1,0 +1,74 @@
+name: Render release notes
+description: Validate a tagged changelog and render its GitHub Release body
+inputs:
+  tag:
+    description: Existing release tag
+    required: true
+  changelog:
+    description: Tracked changelog path
+    required: true
+  repository:
+    description: GitHub owner/repository
+    required: true
+  artifact-url:
+    description: Published ecosystem release URL
+    default: ""
+  artifact-label:
+    description: Link text for the published artifact
+    default: PyPI release
+  issue-role:
+    description: Target of reStructuredText issue roles, issue or pull
+    default: issue
+  output:
+    description: Path for the rendered Markdown body
+    required: true
+  generated-notes:
+    description: Existing GitHub generated-notes file with contributor metadata
+    default: ""
+outputs:
+  previous:
+    description: Previous version tag, or an empty string for the first release
+    value: ${{ steps.version.outputs.previous }}
+runs:
+  using: composite
+  steps:
+    - id: version
+      name: Check the release tag
+      shell: bash
+      env:
+        TAG: ${{ inputs.tag }}
+      run: |
+        set -euo pipefail
+        release-creator tags "$TAG"
+        previous=$(git tag --list | release-creator tags "$TAG" --previous)
+        printf 'previous=%s\n' "$previous" >>"$GITHUB_OUTPUT"
+    - name: Render GitHub Release notes
+      shell: bash
+      env:
+        TAG: ${{ inputs.tag }}
+        CHANGELOG: ${{ inputs.changelog }}
+        REPOSITORY: ${{ inputs.repository }}
+        ARTIFACT_URL: ${{ inputs.artifact-url }}
+        ARTIFACT_LABEL: ${{ inputs.artifact-label }}
+        ISSUE_ROLE: ${{ inputs.issue-role }}
+        OUTPUT: ${{ inputs.output }}
+        GENERATED_NOTES: ${{ inputs.generated-notes }}
+        PREVIOUS: ${{ steps.version.outputs.previous }}
+      run: |
+        set -euo pipefail
+        args=(--changelog "$CHANGELOG" --tag "$TAG" --repository "$REPOSITORY" --issue-role "$ISSUE_ROLE")
+        if [[ -n "$PREVIOUS" ]]; then
+          args+=(--previous "$PREVIOUS")
+        fi
+        if [[ -n "$ARTIFACT_URL" ]]; then
+          args+=(--artifact-url "$ARTIFACT_URL" --artifact-label "$ARTIFACT_LABEL")
+        fi
+        if [[ -n "$GENERATED_NOTES" ]]; then
+          args+=(--generated-notes "$GENERATED_NOTES")
+        fi
+        release-creator notes "${args[@]}" >"$OUTPUT"
+        if [[ ! -s "$OUTPUT" ]] ||
+          [[ -n "$PREVIOUS" && $(grep -c '^\*\*Full Changelog\*\*:' "$OUTPUT") != 1 ]]; then
+          echo '::error::release notes must contain one comparison link' >&2
+          exit 1
+        fi

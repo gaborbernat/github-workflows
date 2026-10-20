@@ -1,8 +1,8 @@
 # GitHub workflows
 
-Four composite Actions prepare a Towncrier release, verify its patch, push an App-authored commit and tag, and build a
-Python wheel and sdist. They run as steps in the caller's workflow. Each repository keeps its dispatch form, publisher,
-GitHub environment, and required check names.
+Five composite Actions prepare a Towncrier release, verify its patch, push an App-authored commit and tag, build a
+Python wheel and sdist, and render GitHub Release notes. They run as steps in the caller's workflow. Each repository
+keeps its dispatch form, publisher, GitHub environment, and required check names.
 
 ## Start with a caller
 
@@ -170,6 +170,43 @@ this executes the build steps used by the tag publisher without publishing the a
 a wheel and sdist to `out-dir`. The checkout must be clean before the Action starts; it fails if `prek` fails or changes
 a tracked or untracked source file. Use a separate build path for repositories whose build command differs from
 `uv build --sdist --wheel`.
+
+## Render GitHub Release notes
+
+`render-release-notes` checks the tag and its changelog section, finds the previous tag, and renders an unwrapped GitHub
+Release body with `release-creator`. Call it on the local tag in a PR rehearsal and again on the actual tag. The
+publisher still fetches GitHub's generated notes and creates the Release; this Action only writes a local Markdown file.
+
+```yaml
+  - uses: tox-dev/github-workflows/render-release-notes@SHA
+    with:
+      tag: ${{ github.ref_name }}
+      changelog: CHANGELOG.md
+      repository: ${{ github.repository }}
+      artifact-url: https://pypi.org/project/example/${{ github.ref_name }}/
+      generated-notes: ${{ runner.temp }}/generated-notes.md
+      output: ${{ runner.temp }}/release-notes.md
+```
+
+- `tag` **(required)**: Release version, such as `1.2.3`. The checkout must contain its changelog section. A local PR
+  rehearsal creates this tag without pushing it to GitHub.
+- `changelog` **(required)**: Tracked Markdown or reStructuredText changelog in the format that `release-creator notes`
+  parses, with exactly one section for the tag.
+- `repository` **(required)**: GitHub `owner/repository` used in PR and comparison links.
+- `artifact-url`: Ecosystem release URL, such as a PyPI version page. Omit it for a GitHub-only project.
+- `artifact-label`: Link text for `artifact-url`; default `PyPI release`. Use `Zipapp` or another product name for a
+  different artifact.
+- `issue-role`: For reStructuredText, whether `:issue:` links target GitHub issues (default) or pull requests.
+- `generated-notes`: Path to GitHub's generated-notes body. The tag publisher fetches it after PyPI publication; a PR
+  rehearsal supplies a small fixture with its actual PR author and URL. This preserves New Contributors and fills any
+  missing `by @handle` credit. Omit it when the release has no GitHub-generated contributor metadata.
+- `output` **(required)**: Writable path for the GitHub Release body. Pass it to `gh release create --notes-file` only
+  after the ecosystem publisher succeeds.
+
+**Output:** `previous` is the nearest earlier version tag, or empty for the first release. **Working-tree effect:** The
+Action writes only `output`. It rejects an invalid tag, a missing heading, an empty body, or a missing comparison link
+when an earlier tag exists. It neither fetches generated notes nor writes a GitHub Release, so a PR job needs only read
+permissions. Fetching generated notes uses GitHub's release endpoint and needs Contents write in the tag publisher.
 
 ## Check a caller before switching
 

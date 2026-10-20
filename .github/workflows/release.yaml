@@ -29,18 +29,29 @@ jobs:
         run: |
           git tag --list | release-creator tags "$TAG"
           prek run --all-files
-      - name: Publish GitHub Release
+      - name: Fetch contributor metadata
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           previous=$(git tag --list | release-creator tags "$TAG" --previous)
-          args=()
+          args=(-f "tag_name=$TAG")
           if [[ -n "$previous" ]]; then
-            args+=(--previous "$previous")
+            args+=(-f "previous_tag_name=$previous")
           fi
-          release-creator notes --changelog CHANGELOG.md --tag "$TAG" \
-            --repository "$GITHUB_REPOSITORY" "${args[@]}" \
-            >"$RUNNER_TEMP/release-notes.md"
+          gh api -X POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" "${args[@]}" --jq .body \
+            >"$RUNNER_TEMP/generated-notes.md"
+      - uses: $/render-release-notes
+        with:
+          tag: ${{ github.ref_name }}
+          changelog: CHANGELOG.md
+          repository: ${{ github.repository }}
+          generated-notes: ${{ runner.temp }}/generated-notes.md
+          output: ${{ runner.temp }}/release-notes.md
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
           gh release create "$TAG" --verify-tag --title "$TAG" --notes-file "$RUNNER_TEMP/release-notes.md"
