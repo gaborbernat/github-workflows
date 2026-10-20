@@ -156,6 +156,7 @@ jobs:
             exit 1
             ;;
           esac
+          mkdir -p "$FRAGMENTS"
           printf 'Verify a user-visible release fix.\n' >"$FRAGMENTS/+validation-${PR_NUMBER}.bugfix.$extension"
           test ! -e "$FRAGMENTS/${PR_NUMBER}.bugfix.$extension"
           printf 'Verify a numbered release fix.\n' >"$FRAGMENTS/${PR_NUMBER}.bugfix.$extension"
