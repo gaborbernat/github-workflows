@@ -52,7 +52,8 @@ or an existing tag. A PR run squashes the proposed changes onto its base, adds o
 creates a commit and tag in the runner. It prepares and checks the changelog patch, runs `prek` on the candidate, builds
 the wheel and sdist, and checks the rendered links and author credit. It also checks rejection of unsupported fragments,
 a dirty checkout, a stale release branch, an invalid tag, and a missing changelog. The local commit and tag never leave
-the runner.
+the runner. It renders the local tag both with the PR's contributor fixture and without metadata, matching the read-only
+tag validation path.
 
 Call the same pinned workflow from the PR check and the tag publisher's build job:
 
@@ -96,9 +97,10 @@ rehearsal so the two jobs use distinct artifact names.
 
 The job uploads `python-package-distributions` with the wheel and sdist, and `release-validation-notes` with the body
 rendered from the tagged source. On a PR it also uploads `release-dry-run` with the patch, assembled changelog, notes,
-contributor fixture, and distribution hashes. A tag run has no fixture, so its notes lack GitHub contributor metadata.
-The tag-only GitHub Release job must fetch generated notes with Contents write, rerender with `render-release-notes`,
-and create the Release after the ecosystem upload. PyPI OIDC stays in the caller's separate `release` environment job:
+contributor fixture, no-metadata tag preview, and distribution hashes. A tag run has no fixture, so its notes lack
+GitHub contributor metadata. The tag-only GitHub Release job must fetch generated notes with Contents write, rerender
+with `render-release-notes`, and create the Release after the ecosystem upload. PyPI OIDC stays in the caller's separate
+`release` environment job:
 [PyPI does not support trusted publishing inside reusable workflows](https://docs.pypi.org/trusted-publishers/troubleshooting/#reusable-workflows-on-github).
 
 ## Prepare Towncrier release

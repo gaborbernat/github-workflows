@@ -235,6 +235,16 @@ jobs:
           issue-role: ${{ inputs.issue-role }}
           generated-notes: ${{ steps.metadata.outputs.path }}
           output: ${{ runner.temp }}/release-notes.md
+      - if: github.event_name == 'pull_request'
+        uses: tox-dev/github-workflows/render-release-notes@eebfb35f18a56bcb11ba6fe9fbfb478589253451
+        with:
+          tag: ${{ steps.prepare.outputs.version }}
+          changelog: ${{ inputs.changelog }}
+          repository: ${{ github.repository }}
+          artifact-url: ${{ inputs.artifact-base-url }}${{ steps.prepare.outputs.version }}/
+          artifact-label: ${{ inputs.artifact-label }}
+          issue-role: ${{ inputs.issue-role }}
+          output: ${{ runner.temp }}/tag-preview-notes.md
       - name: Inspect candidate artifacts
         if: github.event_name == 'pull_request'
         env:
@@ -258,6 +268,11 @@ jobs:
             echo '::error::generated-notes banner in release notes'
             exit 1
           fi
+          test "$(grep -c '^\*\*Full Changelog\*\*:' "$RUNNER_TEMP/tag-preview-notes.md")" -eq 1
+          if grep -Fq '<!-- Release notes generated' "$RUNNER_TEMP/tag-preview-notes.md"; then
+            echo '::error::generated-notes banner in tag preview'
+            exit 1
+          fi
           sha256sum dist/* >"$RUNNER_TEMP/dist.sha256"
           cp "$CHANGELOG" "$RUNNER_TEMP/changelog"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -278,6 +293,7 @@ jobs:
             ${{ runner.temp }}/release.patch
             ${{ runner.temp }}/release-notes.md
             ${{ runner.temp }}/generated-notes.md
+            ${{ runner.temp }}/tag-preview-notes.md
             ${{ runner.temp }}/changelog
             ${{ runner.temp }}/dist.sha256
             dist/*
