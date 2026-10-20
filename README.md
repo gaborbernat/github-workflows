@@ -95,6 +95,10 @@ with `release-creator`, Towncrier, and `prek`. `python-version` defaults to `3.1
 root for `uv build`. `artifact-prefix` defaults to empty; set it while comparing this workflow with an existing PR
 rehearsal so the two jobs use distinct artifact names.
 
+The PR caller may also expose `workflow_dispatch` on a non-main branch. In that event the workflow finds the open PR for
+the branch, uses its base and author metadata, and performs the same local rehearsal. It fails when the branch has no
+open PR.
+
 The job uploads `python-package-distributions` with the wheel and sdist, and `release-validation-notes` with the body
 rendered from the tagged source. On a PR it also uploads `release-dry-run` with the patch, assembled changelog, notes,
 contributor fixture, no-metadata tag preview, and distribution hashes. A tag run has no fixture, so its notes lack
