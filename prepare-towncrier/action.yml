@@ -14,7 +14,7 @@ inputs:
     description: Towncrier fragment directory, relative to the repository root
     default: changelog.d
   format:
-    description: Changelog format, either markdown or none
+    description: Changelog format, markdown, rst, or none
     default: none
   link-fragments:
     description: Resolve named fragments and authors with release-creator
@@ -71,14 +71,17 @@ runs:
       run: |
         set -euo pipefail
         towncrier build --yes --version "$VERSION"
-        if [[ "$FORMAT" != markdown && "$FORMAT" != none ]]; then
-          echo '::error::format must be markdown or none' >&2
+        case "$FORMAT" in
+        markdown) formatter=mdformat ;;
+        rst) formatter=docstrfmt ;;
+        none) formatter="" ;;
+        *)
+          echo '::error::format must be markdown, rst, or none' >&2
           exit 1
-        fi
-        if [[ "$FORMAT" == markdown ]]; then
-          if ! prek run mdformat --files "$CHANGELOG"; then
-            prek run mdformat --files "$CHANGELOG"
-          fi
+          ;;
+        esac
+        if [[ -n "$formatter" ]] && ! prek run "$formatter" --files "$CHANGELOG"; then
+          prek run "$formatter" --files "$CHANGELOG"
         fi
         notes=$(release-creator notes --changelog "$CHANGELOG" --tag "$VERSION" --repository "$GITHUB_REPOSITORY")
         if [[ "$notes" != *'### '* ]]; then

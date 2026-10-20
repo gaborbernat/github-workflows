@@ -112,7 +112,7 @@ def test_prepare_rejects_dirty_checkout(repository: Path, tmp_path: Path, action
 @pytest.mark.parametrize(
     ("option", "value", "error"),
     [
-        pytest.param("FORMAT", "rst", "format must be markdown or none", id="format"),
+        pytest.param("FORMAT", "yaml", "format must be markdown, rst, or none", id="format"),
         pytest.param(
             "LINK_FRAGMENTS",
             "maybe",
@@ -265,3 +265,35 @@ def test_prepare_formats_markdown(repository: Path, tmp_path: Path, action_scrip
     assert result.returncode == 0, result.stderr
     changelog_lines = (repository / "CHANGELOG.md").read_text().splitlines()
     assert max(map(len, changelog_lines)) <= 120  # ruff: ignore[magic-value-comparison]  # Changelog width.
+
+
+def test_prepare_formats_rst(repository: Path, tmp_path: Path, action_scripts: Path) -> None:
+    project = repository / "pyproject.toml"
+    project.write_text(
+        project.read_text()
+        .replace("CHANGELOG.md", "CHANGELOG.rst")
+        .replace("template.jinja2", "template.rst.jinja2")
+    )
+    (repository / "CHANGELOG.md").rename(repository / "CHANGELOG.rst")
+    (repository / "CHANGELOG.rst").write_text("Changelog\n=========\n\n.. towncrier release notes start\n")
+    (repository / "changelog.d/+feature.feature.md").rename(repository / "changelog.d/+feature.feature.rst")
+    (repository / "changelog.d/+feature.feature.rst").write_text("Add a Before feature.\n")
+    (repository / ".pre-commit-config.yaml").write_text(
+        "repos:\n  - repo: local\n    hooks:\n      - id: docstrfmt\n"
+        "        name: docstrfmt\n        entry: sed -i s/Before/After/\n"
+        "        language: system\n        files: CHANGELOG.rst\n"
+    )
+    run(repository, "git", "add", "-A")
+    run(repository, "git", "commit", "-m", "Set RST hook")
+    run(repository, "git", "push", "origin", "main")
+    result = action(
+        repository,
+        tmp_path,
+        action_scripts,
+        "prepare-towncrier",
+        version="0.2.0",
+        FORMAT="rst",
+        CHANGELOG="CHANGELOG.rst",
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Add a After feature." in (repository / "CHANGELOG.rst").read_text()

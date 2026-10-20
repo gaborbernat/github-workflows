@@ -203,18 +203,19 @@ build:
 ```
 
 The inputs must match in both callers. `changelog` and `fragments` are the paths in `tool.towncrier`; `format` is
-`markdown` when the caller's `mdformat` hook formats its assembled changelog and `none` otherwise. `artifact-base-url`
-ends just before the version; the workflow appends `1.2.3/` for tag `1.2.3`. Set it to the package's actual PyPI project
-path. `artifact-label` changes the link text from `PyPI release`; `issue-role` selects whether reStructuredText
-`:issue:` references link to issues or pull requests. `lock` defaults to `pylock.toml` and must have a `release` group
-with `release-creator`, Towncrier, and `prek`. `python-version` defaults to `3.15`; `source` defaults to the repository
-root for `uv build`. `artifact-prefix` defaults to empty; set it while comparing this workflow with an existing PR
-rehearsal so the two jobs use distinct artifact names.
+`markdown` for an `mdformat` hook, `rst` for a `docstrfmt` hook, or `none` when no formatter hook applies.
+`artifact-base-url` ends just before the version; the workflow appends `1.2.3/` for tag `1.2.3`. Set it to the package's
+actual PyPI project path. `artifact-label` changes the link text from `PyPI release`; `issue-role` selects whether
+reStructuredText `:issue:` references link to issues or pull requests. `lock` defaults to `pylock.toml` and must have a
+`release` group with `release-creator`, Towncrier, and `prek`. `python-version` defaults to `3.15`; `source` defaults to
+the repository root for `uv build`. `artifact-prefix` defaults to empty; set it while comparing this workflow with an
+existing PR rehearsal so the two jobs use distinct artifact names.
 
-For an RST changelog, use `format: none` and an empty `heading-prefix`. The workflow creates `.rst` test fragments from
-the changelog suffix and checks RST PR references in the assembled section. If the repository uses `:issue:` roles, set
-`fixture-issue` to an existing issue number. The PR rehearsal then checks its GitHub issue link in the rendered notes.
-The input has no effect on an existing tag:
+For an RST changelog, use `format: rst` when the caller has a `docstrfmt` hook; otherwise use `format: none`. Set an
+empty `heading-prefix`. The workflow creates `.rst` test fragments from the changelog suffix and checks RST PR
+references in the assembled section. If the repository uses `:issue:` roles, set `fixture-issue` to an existing issue
+number. The PR rehearsal then checks its GitHub issue link in the rendered notes. The input has no effect on an existing
+tag:
 
 ```yaml
 with:
@@ -264,8 +265,9 @@ rendering, formatting, or checks fail, or if preparation creates untracked files
   match `tool.towncrier.filename` in the caller's `pyproject.toml`.
 - `fragments`: Fragment directory relative to the checkout root; default `changelog.d`. Set this to the caller's
   `tool.towncrier.directory`. Version selection and PR linking both read this directory.
-- `format`: `none` (default) or `markdown`. `markdown` runs the caller's `mdformat` prek hook on the assembled
-  changelog. Use `none` for RST or when that hook does not exist. The full `prek` suite runs in either case.
+- `format`: `none` (default), `markdown`, or `rst`. `markdown` runs the caller's `mdformat` hook and `rst` runs its
+  `docstrfmt` hook through `prek` on the assembled changelog. Use `none` when no formatter hook applies. The full `prek`
+  suite runs for every option.
 - `link-fragments`: `true` (default) resolves named fragments and authors through GitHub; `false` skips that step for a
   caller whose fragments already contain release links and credits.
 - `patch` **(required)**: Writable path to the Git patch, usually under `runner.temp`. Upload this exact file as an
