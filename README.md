@@ -223,15 +223,15 @@ contributor metadata. The tag-only GitHub Release job must fetch generated notes
 
 ## Rehearse an exact PR head
 
-Dispatch the shared `check.yaml` workflow against the branch that contains the rehearsal code. The command below runs on
-GitHub's Ubuntu runner and checks the current head of `tox-dev/python-discovery` PR #156. Replace the SHA after every PR
-push; the job fails if the PR has moved. `artifact-base-url` ends before the version, and `format` matches the
-changelog's `prek` formatter.
+Dispatch the shared `check.yaml` workflow against the ref that contains the rehearsal code. Use the shared PR branch
+while reviewing it, then `main` after merge. The command below runs on GitHub's Ubuntu runner and checks the current
+head of `tox-dev/python-discovery` PR #156. Replace the SHA after every PR push; the job fails if the PR has moved.
+`artifact-base-url` ends before the version, and `format` matches the changelog's `prek` formatter.
 
 ```bash
 gh workflow run check.yaml \
   --repo tox-dev/github-workflows \
-  --ref fix/semantic-release-gate \
+  --ref SHARED_WORKFLOW_REF \
   -f repository=tox-dev/python-discovery \
   -f head-sha=PR_HEAD_SHA \
   -f pull-request=156 \
