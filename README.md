@@ -71,8 +71,7 @@ on:
 permissions: {}
 jobs:
   upgrade:
-    uses:
-      tox-dev/github-workflows/.github/workflows/upgrade-release-tools.yaml@SHA
+    uses: tox-dev/github-workflows/.github/workflows/upgrade-release-tools.yaml@SHA
     permissions:
       contents: write
       pull-requests: write
@@ -209,18 +208,16 @@ reStructuredText `:issue:` references link to issues or pull requests. `lock` de
 the repository root for `uv build`. `artifact-prefix` defaults to empty; set it while comparing this workflow with an
 existing PR rehearsal so the two jobs use distinct artifact names.
 
-For an RST changelog, use `format: rst` when the caller has a `docstrfmt` hook; otherwise use `format: none`. Set
-`heading-prefix: " "` for Towncrier's overline headings, which indent the version by one space. The workflow creates
-`.rst` test fragments from the changelog suffix and checks RST PR references in the assembled section. If the repository
-uses `:issue:` roles, set `fixture-issue` to an existing issue number. The PR rehearsal then checks its GitHub issue
-link in the rendered notes. The input has no effect on an existing tag:
+For an RST changelog, use `format: rst` when the caller has a `docstrfmt` hook; otherwise use `format: none`. The
+workflow creates `.rst` test fragments from the changelog suffix and checks RST PR references in the assembled section.
+If the repository uses `:issue:` roles, set `fixture-issue` to an existing issue number. The PR rehearsal then checks
+its GitHub issue link in the rendered notes. The input has no effect on an existing tag:
 
 ```yaml
 with:
   changelog: docs/changelog.rst
   fragments: docs/changelog
   format: rst
-  heading-prefix: ' '
   fixture-issue: '31'
   artifact-base-url: https://pypi.org/project/filelock/
 ```
@@ -280,8 +277,8 @@ those changes. The checkout must be clean before this Action starts.
 ## Validate release patch
 
 `validate-release-patch` starts from a fresh checkout of the original branch commit. It rejects a branch that moved,
-applies the uploaded patch, checks its changed paths and version heading, and runs `prek`. It leaves the patch staged
-for the commit Action. It does not need a write token.
+applies the uploaded patch, checks its changed paths, renders the requested version with `release-creator`, and runs
+`prek`. It leaves the patch staged for the commit Action. It does not need a write token.
 
 ```yaml
   - uses: tox-dev/github-workflows/validate-release-patch@SHA
@@ -292,13 +289,11 @@ for the commit Action. It does not need a write token.
       fragments: docs/changelog.d
 ```
 
-- `version` **(required)**: Exact tag chosen by preparation. The changelog must contain a heading for it.
+- `version` **(required)**: Exact tag chosen by preparation. `release-creator notes` must find one valid section for it.
 - `patch` **(required)**: Local path of the downloaded patch artifact, not an artifact name or URL.
 - `changelog` **(required)**: Same tracked path passed to preparation. Only this file and files below `fragments` may
   change in the patch.
 - `fragments` **(required)**: Same directory passed to preparation. Towncrier may consume or rename its files.
-- `heading-prefix`: Text before the version in its heading; default `## `. For `Version 1.2.3 (date)`, use `Version `;
-  for Towncrier's RST overline heading, use one space. The Action expects the version to be followed by ` (`.
 - `branch`: Protected release branch; default `main`.
 - `remote`: Git remote fetched for the freshness check; default `origin`.
 - `expected-sha`: Commit that preparation checked out. By default the Action uses `GITHUB_SHA`; set this when

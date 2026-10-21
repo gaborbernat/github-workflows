@@ -3,6 +3,7 @@ from __future__ import annotations
 from textwrap import dedent
 lazy from pathlib import Path
 
+import pytest
 from conftest import action, run
 
 
@@ -34,31 +35,49 @@ def test_validate_custom_remote_branch(repository: Path, tmp_path: Path, action_
     assert run(repository, "git", "diff", "--cached", "--name-only").stdout.strip()
 
 
-def test_validate_rejects_wrong_heading_prefix(repository: Path, tmp_path: Path, action_scripts: Path) -> None:
-    assert action(repository, tmp_path, action_scripts, "prepare-towncrier", version="0.2.0").returncode == 0
-    run(repository, "git", "reset", "--hard", "HEAD")
-    result = action(
-        repository,
-        tmp_path,
-        action_scripts,
-        "validate-release-patch",
-        version="0.2.0",
-        HEADING_PREFIX="### ",
+@pytest.mark.parametrize(
+    "heading",
+    [
+        pytest.param("0.2.0 (2026-10-20)", id="plain"),
+        pytest.param("`0.2.0 <https://github.com/tox-dev/fixture/tree/0.2.0>`_ - 2026-10-20", id="linked"),
+    ],
+)
+def test_validate_rst_heading(repository: Path, tmp_path: Path, action_scripts: Path, heading: str) -> None:
+    changelog = repository / "CHANGELOG.rst"
+    changelog.write_text("Changelog\n=========\n")
+    run(repository, "git", "add", "CHANGELOG.rst")
+    run(repository, "git", "commit", "-m", "Track RST changelog")
+    run(repository, "git", "push", "origin", "main")
+    changelog.write_text(
+        dedent("""\
+            Changelog
+            =========
+
+            {heading}
+            {underline}
+
+            Added
+            -----
+
+            - Add a feature.
+            """).format(heading=heading, underline="=" * len(heading)),
     )
-    assert result.returncode != 0
-    assert "has no section" in result.stderr
-
-
-def test_validate_rst_overline_heading(repository: Path, tmp_path: Path, action_scripts: Path) -> None:
-    assert action(repository, tmp_path, action_scripts, "prepare-towncrier", version="0.2.0").returncode == 0
-    changelog = repository / "CHANGELOG.md"
-    text = changelog.read_text()
-    assert "## 0.2.0 (" in text
-    changelog.write_text(text.replace("## 0.2.0 (", " 0.2.0 (", 1))
     (tmp_path / "release.patch").write_text(run(repository, "git", "diff", "HEAD", "--binary").stdout)
     run(repository, "git", "reset", "--hard", "HEAD")
-    result = action(repository, tmp_path, action_scripts, "validate-release-patch", version="0.2.0", HEADING_PREFIX=" ")
+    result = action(
+        repository, tmp_path, action_scripts, "validate-release-patch", version="0.2.0", CHANGELOG="CHANGELOG.rst"
+    )
     assert result.returncode == 0, result.stderr
+
+
+def test_validate_rejects_unchanged_changelog(repository: Path, tmp_path: Path, action_scripts: Path) -> None:
+    fragment = repository / "changelog.d/+feature.feature.md"
+    fragment.write_text("Change the fragment without rendering it.\n")
+    (tmp_path / "release.patch").write_text(run(repository, "git", "diff", "HEAD", "--binary").stdout)
+    run(repository, "git", "reset", "--hard", "HEAD")
+    result = action(repository, tmp_path, action_scripts, "validate-release-patch", version="0.2.0")
+    assert result.returncode != 0
+    assert "release patch does not change CHANGELOG.md" in result.stderr
 
 
 def test_validate_rejects_stale_branch(repository: Path, tmp_path: Path, action_scripts: Path) -> None:
@@ -114,7 +133,7 @@ def test_validate_rejects_missing_heading(repository: Path, tmp_path: Path, acti
     run(repository, "git", "restore", ".")
     result = action(repository, tmp_path, action_scripts, "validate-release-patch", version="0.2.0")
     assert result.returncode != 0
-    assert "has no section" in result.stderr
+    assert "has no valid section" in result.stderr
 
 
 def test_validate_rejects_embedded_heading(repository: Path, tmp_path: Path, action_scripts: Path) -> None:
@@ -123,7 +142,7 @@ def test_validate_rejects_embedded_heading(repository: Path, tmp_path: Path, act
     run(repository, "git", "restore", ".")
     result = action(repository, tmp_path, action_scripts, "validate-release-patch", version="0.2.0")
     assert result.returncode != 0
-    assert "has no section" in result.stderr
+    assert "has no valid section" in result.stderr
 
 
 def test_validate_rejects_prek_changes(repository: Path, tmp_path: Path, action_scripts: Path) -> None:

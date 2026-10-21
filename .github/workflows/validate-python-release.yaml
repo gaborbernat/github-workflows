@@ -14,10 +14,6 @@ on:
         description: Changelog format passed to prepare-towncrier
         required: true
         type: string
-      heading-prefix:
-        description: Literal prefix of a release version heading; one space for Towncrier RST overline headings
-        default: "## "
-        type: string
       artifact-base-url:
         description: Ecosystem release URL without the version
         required: true
@@ -298,7 +294,6 @@ jobs:
           patch: ${{ runner.temp }}/release.patch
           changelog: ${{ inputs.changelog }}
           fragments: ${{ inputs.fragments }}
-          heading-prefix: ${{ inputs.heading-prefix }}
           remote: rehearsal
           expected-sha: "0000000000000000000000000000000000000000"
       - name: Check stale branch rejection
@@ -326,7 +321,6 @@ jobs:
           patch: ${{ runner.temp }}/invalid.patch
           changelog: ${{ inputs.changelog }}
           fragments: ${{ inputs.fragments }}
-          heading-prefix: ${{ inputs.heading-prefix }}
           remote: rehearsal
           expected-sha: ${{ steps.fixture.outputs.sha }}
       - name: Check unrelated path rejection
@@ -344,7 +338,6 @@ jobs:
           patch: ${{ runner.temp }}/release.patch
           changelog: ${{ inputs.changelog }}
           fragments: ${{ inputs.fragments }}
-          heading-prefix: ${{ inputs.heading-prefix }}
           remote: rehearsal
           expected-sha: ${{ steps.fixture.outputs.sha }}
       - name: Commit and tag the local candidate

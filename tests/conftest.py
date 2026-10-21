@@ -112,7 +112,6 @@ def action(
             "GITHUB_REPOSITORY": "tox-dev/fixture",
             "GITHUB_SHA": run(repository, "git", "rev-parse", "HEAD").stdout.strip(),
             "EXPECTED_SHA": run(repository, "git", "rev-parse", "HEAD").stdout.strip(),
-            "HEADING_PREFIX": "## ",
             "BRANCH": "main",
             "REMOTE": "origin",
             "ANNOTATED": "false",
