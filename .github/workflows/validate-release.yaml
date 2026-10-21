@@ -24,50 +24,34 @@ jobs:
           uv venv --python 3.15 .venv
           uv pip sync --preview-features pylock --python .venv/bin/python --group release --group test pylock.toml
           echo "$PWD/.venv/bin" >>"$GITHUB_PATH"
-      - name: Check bot author is omitted
+      - if: github.event_name == 'pull_request'
+        uses: $/validate-bot-credits
+      - name: Squash the target pull request
         if: github.event_name == 'pull_request'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          test "$(gh api repos/tox-dev/devpi-process/pulls/288 --jq .user.login)" = 'dependabot[bot]'
-          test "$(gh api repos/tox-dev/devpi-process/pulls/288 --jq .user.type)" = Bot
-          mkdir "$RUNNER_TEMP/bot-fragments"
-          printf 'Document a bot-owned dependency fix.\n' >"$RUNNER_TEMP/bot-fragments/+bot.bugfix.md"
-          printf '+bot.bugfix.md\tDependency update (#288)\n' >"$RUNNER_TEMP/commits.tsv"
-          release-creator fragments \
-            --directory "$RUNNER_TEMP/bot-fragments" \
-            --repository tox-dev/devpi-process \
-            --commit-map "$RUNNER_TEMP/commits.tsv" \
-            --resolve-authors
-          printf '## 1.0.0 (today)\n\n### Fixed\n\n- %s\n' \
-            "$(cat "$RUNNER_TEMP/bot-fragments/+bot.bugfix.md")" >"$RUNNER_TEMP/bot-changelog.md"
-          printf '* Dependency update by @dependabot[bot] in https://github.com/tox-dev/devpi-process/pull/288\n' \
-            >"$RUNNER_TEMP/bot-generated.md"
-          release-creator notes \
-            --changelog "$RUNNER_TEMP/bot-changelog.md" \
-            --tag 1.0.0 \
-            --repository tox-dev/devpi-process \
-            --generated-notes "$RUNNER_TEMP/bot-generated.md" >"$RUNNER_TEMP/bot-notes.md"
-          grep -Fq '[#288](https://github.com/tox-dev/devpi-process/pull/288)' "$RUNNER_TEMP/bot-notes.md"
-          ! grep -Fq '@dependabot' "$RUNNER_TEMP/bot-notes.md"
-      - name: Rehearse a squash merge
-        if: github.event_name == 'pull_request'
-        id: fixture
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
           git checkout -B release-validation "$BASE_SHA"
           git merge --squash "$HEAD_SHA"
+      - name: Commit a validation fragment
+        if: github.event_name == 'pull_request'
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
           printf 'Validate the release pipeline on this pull request.\n' \
             >"changelog.d/+validation-${PR_NUMBER}.bugfix.md"
           git add -A
           git -c user.name=release-validation \
             -c user.email=release-validation@users.noreply.github.com \
             commit -m "Validate release pipeline (#${PR_NUMBER})"
+      - name: Create the local release remote
+        if: github.event_name == 'pull_request'
+        id: fixture
+        run: |
+          set -euo pipefail
           git init --bare "$RUNNER_TEMP/release-origin.git"
           git remote set-url origin "$RUNNER_TEMP/release-origin.git"
           git push origin HEAD:main

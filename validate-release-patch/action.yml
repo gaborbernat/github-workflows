@@ -28,6 +28,13 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Require a clean release checkout
+      shell: bash
+      run: |
+        if [[ -n $(git status --porcelain) ]]; then
+          echo '::error::release validation requires a clean checkout' >&2
+          exit 1
+        fi
     - name: Verify release source
       shell: bash
       env:
@@ -36,23 +43,15 @@ runs:
         EXPECTED_SHA: ${{ inputs.expected-sha }}
       run: |
         set -euo pipefail
-        if [[ -n $(git status --porcelain) ]]; then
-          echo '::error::release validation requires a clean checkout' >&2
-          exit 1
-        fi
         git fetch "$REMOTE" "$BRANCH"
         if [[ $(git rev-parse "$REMOTE/$BRANCH") != "${EXPECTED_SHA:-$GITHUB_SHA}" ]]; then
           echo "::error::$BRANCH changed during release preparation; dispatch again" >&2
           exit 1
         fi
-    - name: Apply and inspect release patch
+    - name: Apply release patch
       shell: bash
       env:
-        VERSION: ${{ inputs.version }}
         PATCH: ${{ inputs.patch }}
-        CHANGELOG: ${{ inputs.changelog }}
-        FRAGMENTS: ${{ inputs.fragments }}
-        REPOSITORY: ${{ inputs.repository || github.repository }}
       run: |
         set -euo pipefail
         git apply --check "$PATCH"
@@ -61,6 +60,13 @@ runs:
           echo '::error::release patch contains no changes' >&2
           exit 1
         fi
+    - name: Check release patch paths
+      shell: bash
+      env:
+        CHANGELOG: ${{ inputs.changelog }}
+        FRAGMENTS: ${{ inputs.fragments }}
+      run: |
+        set -euo pipefail
         mapfile -d '' -t paths < <(git diff --cached --name-only -z)
         for path in "${paths[@]}"; do
           if [[ "$path" != "$CHANGELOG" && "$path" != "$FRAGMENTS/"* ]]; then
@@ -73,6 +79,13 @@ runs:
           echo "::error::release patch does not change $CHANGELOG" >&2
           exit 1
         fi
+    - name: Check rendered release section
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        CHANGELOG: ${{ inputs.changelog }}
+        REPOSITORY: ${{ inputs.repository || github.repository }}
+      run: |
         if ! release-creator notes --changelog "$CHANGELOG" --tag "$VERSION" --repository "$REPOSITORY" >/dev/null; then
           echo "::error::$CHANGELOG has no valid section for $VERSION" >&2
           exit 1

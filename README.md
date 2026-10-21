@@ -29,10 +29,13 @@ changelog:
     - uses: astral-sh/setup-uv@SETUP_UV_SHA
       with:
         python-version: '3.15'
-    - run: |
-        uv venv --python 3.15 "$RUNNER_TEMP/release-tools"
-        uv pip sync --preview-features pylock --python "$RUNNER_TEMP/release-tools/bin/python" --group release pylock.toml
-        echo "$RUNNER_TEMP/release-tools/bin" >>"$GITHUB_PATH"
+    - name: Create release tool environment
+      run: uv venv --python 3.15 "$RUNNER_TEMP/release-tools"
+    - name: Install locked release tools
+      run: uv pip sync --preview-features pylock --python
+        "$RUNNER_TEMP/release-tools/bin/python" --group release pylock.toml
+    - name: Expose release tools
+      run: echo "$RUNNER_TEMP/release-tools/bin" >>"$GITHUB_PATH"
     - uses: tox-dev/github-workflows/validate-news@SHA
 ```
 
@@ -53,6 +56,10 @@ legacy fragment path:
       fragments: docs/changelog
       extension: rst
 ```
+
+`validate-bot-credits` is an internal rehearsal Action with no inputs or outputs. Both release validation workflows use
+it to fetch a known bot PR, link a synthetic fragment, and confirm that its notes keep the PR link without crediting the
+bot. It reads public GitHub metadata and writes only temporary fixture files.
 
 ## Refresh the release tool lock
 

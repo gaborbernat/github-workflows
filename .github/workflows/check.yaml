@@ -62,36 +62,26 @@ jobs:
           echo "$PWD/.venv/bin" >>"$GITHUB_PATH"
       - name: Check repository formatting
         run: prek run --all-files
-      - name: Check Python tests
-        run: |
-          ruff format --check .
-          ruff check . --output-format=concise
-          ty check tests
-      - name: Measure Action shell coverage
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Check Python formatting
+        run: ruff format --check .
+      - name: Check Python lint
+        run: ruff check . --output-format=concise
+      - name: Check Python types
+        run: ty check tests
+      - name: Install shell coverage tool
         run: |
           sudo apt-get update
           sudo apt-get install -y kcov
-          KCOV_BIN=kcov KCOV_OUTPUT="$RUNNER_TEMP/shell-coverage" pytest -q
-          kcov --merge "$RUNNER_TEMP/shell-coverage-merged" "$RUNNER_TEMP/shell-coverage"/*
-          python - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          import yaml
-
-          report = next(Path(os.environ["RUNNER_TEMP"], "shell-coverage-merged").rglob("codecov.json"))
-          coverage = json.loads(report.read_text())["coverage"]
-          expected = {
-              f"{path.parent.name}-{index}.sh"
-              for path in Path().glob("*/action.yml")
-              for index, _ in enumerate(yaml.safe_load(path.read_text())["runs"]["steps"])
-          }
-          if set(coverage) != expected or any(not lines or not all(lines.values()) for lines in coverage.values()):
-              raise SystemExit(f"Action shell coverage is below 100%: {coverage}")
-          PY
+      - name: Run Action tests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: KCOV_BIN=kcov KCOV_OUTPUT="$RUNNER_TEMP/shell-coverage" pytest -q
+      - name: Merge Action shell coverage
+        run: kcov --merge "$RUNNER_TEMP/shell-coverage-merged" "$RUNNER_TEMP/shell-coverage"/*
+      - name: Check Action shell coverage
+        env:
+          KCOV_MERGED: ${{ runner.temp }}/shell-coverage-merged
+        run: pytest -q tests/test_shell_coverage.py
       - name: Check inline shell
         run: |
           set -euo pipefail

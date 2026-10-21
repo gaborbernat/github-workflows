@@ -7,59 +7,29 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Check changed fragments
+    - name: Count changed fragments
       shell: bash
       env:
         CONFIG: ${{ inputs.config }}
         BASE_REF: ${{ github.base_ref }}
-        SKIP_NEWS: ${{ contains(github.event.pull_request.labels.*.name, 'skip news') }}
-        BOT_AUTHOR: ${{ github.event.pull_request.user.type == 'Bot' }}
+      run: release-creator validate-news --config "$CONFIG" --base "$BASE_REF" >"$RUNNER_TEMP/news-fragment-count"
+    - name: Check changed fragments with Towncrier
+      shell: bash
+      env:
+        BASE_REF: ${{ github.base_ref }}
       run: |
-        set -euo pipefail
-        python3 - "$RUNNER_TEMP/news-fragment-count" <<'PY'
-        import os
-        import subprocess
-        import sys
-        import tomllib
-        from pathlib import Path
-
-        config = tomllib.loads(Path(os.environ["CONFIG"]).read_text())["tool"]["towncrier"]
-        directory = Path(config["directory"])
-        suffix = Path(config["filename"]).suffix
-        categories = {item["directory"] for item in config["type"]}
-        base = os.environ["BASE_REF"]
-        if not base or suffix not in {".md", ".rst"}:
-            print("::error::news validation needs a PR base and a Markdown or reStructuredText changelog", file=sys.stderr)
-            raise SystemExit(1)
-        result = subprocess.run(
-            ["git", "diff", "--diff-filter=AM", "--name-only", "-z", f"origin/{base}...HEAD", "--", str(directory)],
-            capture_output=True,
-            check=True,
-        )
-        fragments = 0
-        for filename in result.stdout.decode().strip("\0").split("\0"):
-            path = Path(filename)
-            if not filename or path.parent != directory or path.suffix != suffix or len(path.name.split(".")) < 3:
-                continue
-            name = path.name.removesuffix(suffix)
-            parts = name.rsplit(".", 2)
-            if len(parts) == 3 and parts[-1].isdigit():
-                stem, category, _ = parts
-            else:
-                stem, category = name.rsplit(".", 1)
-            if not ((stem.startswith("+") and len(stem) > 1) or stem.isdigit()) or category not in categories:
-                print(f"::error::unsupported changelog fragment: {path}", file=sys.stderr)
-                raise SystemExit(1)
-            if not path.read_text().strip():
-                print(f"::error::empty changelog fragment: {path}", file=sys.stderr)
-                raise SystemExit(1)
-            fragments += 1
-        Path(sys.argv[1]).write_text(f"{fragments}\n")
-        PY
         read -r fragments <"$RUNNER_TEMP/news-fragment-count"
         if ((fragments)); then
           towncrier check --compare-with "origin/$BASE_REF"
-        elif [[ "$SKIP_NEWS" != true && "$BOT_AUTHOR" != true ]]; then
+        fi
+    - name: Require news for human changes
+      shell: bash
+      env:
+        SKIP_NEWS: ${{ contains(github.event.pull_request.labels.*.name, 'skip news') }}
+        BOT_AUTHOR: ${{ github.event.pull_request.user.type == 'Bot' }}
+      run: |
+        read -r fragments <"$RUNNER_TEMP/news-fragment-count"
+        if ((!fragments)) && [[ "$SKIP_NEWS" != true && "$BOT_AUTHOR" != true ]]; then
           echo '::error::add a changelog fragment or apply the skip news label' >&2
           exit 1
         fi

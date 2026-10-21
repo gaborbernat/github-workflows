@@ -45,9 +45,17 @@ def lock_repository(tmp_path: Path) -> Path:
 
 
 def test_upgrade_exports_every_group(lock_repository: Path, tmp_path: Path, upgrade_scripts: Path) -> None:
-    result = execute(
+    installed = execute(
         lock_repository,
         upgrade_scripts / "refresh-release-lock-0.sh",
+        tmp_path,
+        LOCK="pylock.toml",
+        PYTHON_VERSION="3.15",
+    )
+    assert installed.returncode == 0, installed.stderr
+    result = execute(
+        lock_repository,
+        upgrade_scripts / "refresh-release-lock-1.sh",
         tmp_path,
         LOCK="pylock.toml",
         PYTHON_VERSION="3.15",
@@ -70,7 +78,7 @@ def test_upgrade_emits_patch_only_for_change(
         (lock_repository / changed_path).write_text("after\n")
     result = execute(
         lock_repository,
-        upgrade_scripts / "refresh-release-lock-2.sh",
+        upgrade_scripts / "refresh-release-lock-5.sh",
         tmp_path,
         LOCK="pylock.toml",
         GITHUB_OUTPUT=str(tmp_path / "output"),
@@ -112,12 +120,21 @@ def test_upgrade_checks_refreshed_lock(
     run(lock_repository, "git", "commit", "-m", "Add release tools")
     if unrelated:
         (lock_repository / unrelated).write_text("after\n")
-    result = execute(
+    installed = execute(
         lock_repository,
-        upgrade_scripts / "refresh-release-lock-1.sh",
+        upgrade_scripts / "refresh-release-lock-2.sh",
         tmp_path,
         LOCK="pylock.toml",
         PYTHON_VERSION="3.15",
+    )
+    assert installed.returncode == 0, installed.stderr
+    checked = execute(lock_repository, upgrade_scripts / "refresh-release-lock-3.sh", tmp_path)
+    assert checked.returncode == 0, checked.stderr
+    result = execute(
+        lock_repository,
+        upgrade_scripts / "refresh-release-lock-4.sh",
+        tmp_path,
+        LOCK="pylock.toml",
     )
     assert (result.returncode == 0) == (unrelated is None), result.stderr
     assert ("prek changed file outside the lock file" in result.stderr) == (unrelated is not None)
@@ -136,11 +153,31 @@ def test_upgrade_rejects_unrelated_patch(
     patch_dir = tmp_path / "release-tools-lock"
     patch_dir.mkdir()
     (patch_dir / "lock.patch").write_text(patch)
+    applied = execute(lock_repository, publish_scripts / "publish-apply-lock-patch.sh", tmp_path)
+    assert applied.returncode == 0, applied.stderr
     result = execute(
-        lock_repository, publish_scripts / "publish-validate-and-apply-lock-patch.sh", tmp_path, LOCK="pylock.toml"
+        lock_repository, publish_scripts / "publish-check-lock-patch-paths.sh", tmp_path, LOCK="pylock.toml"
     )
     assert (result.returncode == 0) == (path == "pylock.toml")
     assert ("unexpected lock path" in result.stderr) == (path != "pylock.toml")
+
+
+@pytest.mark.parametrize(
+    ("branch", "base", "accepted"),
+    [("automation/update-release-tools", "main", True), ("main", "main", False), ("bad branch", "main", False)],
+    ids=["automation-branch", "base-branch", "invalid-ref"],
+)
+def test_upgrade_rejects_unsafe_branch(
+    lock_repository: Path, tmp_path: Path, publish_scripts: Path, branch: str, base: str, accepted: bool
+) -> None:
+    result = execute(
+        lock_repository,
+        publish_scripts / "publish-check-dependency-branch.sh",
+        tmp_path,
+        BRANCH=branch,
+        BASE=base,
+    )
+    assert (result.returncode == 0) == accepted
 
 
 def execute(repository: Path, script: Path, tmp_path: Path, **environment: str) -> subprocess.CompletedProcess[str]:

@@ -10,25 +10,31 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Set skip news for a bot PR
+    - name: Validate bot fragment format
+      if: github.event.pull_request.user.type == 'Bot'
+      shell: bash
+      env:
+        EXTENSION: ${{ inputs.extension }}
+      run: |
+        if [[ "$EXTENSION" != md && "$EXTENSION" != rst ]]; then
+          echo '::error::fragment extension must be md or rst' >&2
+          exit 1
+        fi
+    - name: Read bot pull request files
+      if: github.event.pull_request.user.type == 'Bot'
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
         REPOSITORY: ${{ github.repository }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
-        BOT_AUTHOR: ${{ github.event.pull_request.user.type == 'Bot' }}
+      run: gh api --paginate "repos/$REPOSITORY/pulls/$PR_NUMBER/files" --jq '.[].filename' >"$RUNNER_TEMP/bot-pr-files"
+    - name: Find bot news fragments
+      if: github.event.pull_request.user.type == 'Bot'
+      shell: bash
+      env:
         FRAGMENTS: ${{ inputs.fragments }}
         EXTENSION: ${{ inputs.extension }}
       run: |
-        set -euo pipefail
-        if [[ "$BOT_AUTHOR" != true ]]; then
-          exit 0
-        fi
-        if [[ "$EXTENSION" != md && "$EXTENSION" != rst ]]; then
-          echo '::error::fragment extension must be md or rst' >&2
-          exit 1
-        fi
-        gh api --paginate "repos/$REPOSITORY/pulls/$PR_NUMBER/files" --jq '.[].filename' >"$RUNNER_TEMP/bot-pr-files"
         has_fragment=false
         mapfile -t files <"$RUNNER_TEMP/bot-pr-files"
         read -ra directories <<<"${FRAGMENTS//,/ }"
@@ -39,7 +45,24 @@ runs:
             esac
           done
         done
-        gh api "repos/$REPOSITORY/issues/$PR_NUMBER/labels" --jq '.[].name' >"$RUNNER_TEMP/bot-pr-labels"
+        echo "$has_fragment" >"$RUNNER_TEMP/bot-has-fragment"
+    - name: Read bot pull request labels
+      if: github.event.pull_request.user.type == 'Bot'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REPOSITORY: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: gh api "repos/$REPOSITORY/issues/$PR_NUMBER/labels" --jq '.[].name' >"$RUNNER_TEMP/bot-pr-labels"
+    - name: Set skip news for a bot PR
+      if: github.event.pull_request.user.type == 'Bot'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REPOSITORY: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: |
+        read -r has_fragment <"$RUNNER_TEMP/bot-has-fragment"
         has_label=false
         if grep -Fxq 'skip news' "$RUNNER_TEMP/bot-pr-labels"; then
           has_label=true

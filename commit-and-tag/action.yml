@@ -41,15 +41,11 @@ runs:
           echo "::error::invalid release tag: $VERSION" >&2
           exit 1
         fi
-    - name: Commit, tag, and push
+    - name: Set App commit identity
       shell: bash
       env:
-        VERSION: ${{ inputs.version }}
         GH_TOKEN: ${{ inputs.token }}
         APP_SLUG: ${{ inputs.app-slug }}
-        MESSAGE: ${{ inputs.message }}
-        BRANCH: ${{ inputs.branch }}
-        ANNOTATED: ${{ inputs.annotated }}
       run: |
         set -euo pipefail
         if [[ -z "$GH_TOKEN" || -z "$APP_SLUG" ]]; then
@@ -59,10 +55,28 @@ runs:
         app_user_id=$(gh api "/users/${APP_SLUG}[bot]" --jq .id)
         git config user.name "${APP_SLUG}[bot]"
         git config user.email "${app_user_id}+${APP_SLUG}[bot]@users.noreply.github.com"
-        git commit -m "$MESSAGE"
+    - name: Commit release patch
+      shell: bash
+      env:
+        MESSAGE: ${{ inputs.message }}
+      run: git commit -m "$MESSAGE"
+    - name: Create release tag
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        MESSAGE: ${{ inputs.message }}
+        ANNOTATED: ${{ inputs.annotated }}
+      run: |
         case "$ANNOTATED" in
         true) git tag -a -m "$MESSAGE" -- "$VERSION" ;;
         false) git tag -- "$VERSION" ;;
         esac
+    - name: Push release commit and tag
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        GH_TOKEN: ${{ inputs.token }}
+        BRANCH: ${{ inputs.branch }}
+      run: |
         gh auth setup-git --hostname github.com --force
         git push --atomic origin "HEAD:$BRANCH" "refs/tags/$VERSION"

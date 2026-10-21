@@ -1311,14 +1311,14 @@ sha256 = "d76623373421df22fb4cf8817020cbb7ef15c725b9d5e45f17e189bfc384190f"
 
 [[packages]]
 name = "release-creator"
-version = "0.4.2.dev19+ge487d20ce"
+version = "0.4.2.dev23+gcf1d89453"
 marker = "\"release\" in dependency_groups"
 
 [packages.vcs]
 type = "git"
 url = "https://github.com/tox-dev/release-creator"
-requested-revision = "e487d20ce35e8dc159332e8d6d268923a83f5769"
-commit-id = "e487d20ce35e8dc159332e8d6d268923a83f5769"
+requested-revision = "cf1d89453fc88887e5cf924f6bc1b83157d3a6ac"
+commit-id = "cf1d89453fc88887e5cf924f6bc1b83157d3a6ac"
 
 [[packages]]
 name = "ruff"

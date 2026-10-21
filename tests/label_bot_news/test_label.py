@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import yaml
 from conftest import action
 from pytest_httpserver import HTTPServer
 
@@ -85,6 +86,10 @@ def test_label_bot_news_updates_label(
 def test_label_bot_news_ignores_human(
     repository: Path, tmp_path: Path, action_scripts: Path, github_api: tuple[HTTPServer, dict[str, str]]
 ) -> None:
+    steps = yaml.safe_load((Path(__file__).resolve().parents[2] / "label-bot-news/action.yml").read_text())["runs"][
+        "steps"
+    ]
+    assert all(step.get("if") == "github.event.pull_request.user.type == 'Bot'" for step in steps)
     server, environment = github_api
     result = action(
         repository,

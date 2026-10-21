@@ -47,6 +47,7 @@ def action_scripts(tmp_path_factory: pytest.TempPathFactory) -> Path:
         "render-release-notes",
         "validate-news",
         "label-bot-news",
+        "validate-bot-credits",
         "refresh-release-lock",
     ):
         action = yaml.safe_load((source / action_name / "action.yml").read_text())
@@ -124,6 +125,8 @@ def action(
         | extra_env
     )
     environment["REPOSITORY"] = extra_env.get("REPOSITORY", environment["GITHUB_REPOSITORY"])
+    if name == "label-bot-news" and environment.get("BOT_AUTHOR") != "true":
+        return subprocess.CompletedProcess([], 0, "", "")
     stdout = []
     stderr = []
     for script in sorted(action_scripts.glob(f"{name}-*.sh")):
@@ -149,7 +152,7 @@ def action(
         stderr.append(result.stderr)
         if result.returncode:
             return subprocess.CompletedProcess(command, result.returncode, "".join(stdout), "".join(stderr))
-        if name == "prepare-towncrier" and script.name == "prepare-towncrier-0.sh":
+        if name == "prepare-towncrier" and script.name == "prepare-towncrier-1.sh":
             environment["VERSION"] = (tmp_path / "output").read_text().split("version=", 1)[1].splitlines()[0]
         if name == "render-release-notes" and script.name == "render-release-notes-0.sh":
             environment["PREVIOUS"] = (tmp_path / "output").read_text().split("previous=", 1)[1].splitlines()[0]

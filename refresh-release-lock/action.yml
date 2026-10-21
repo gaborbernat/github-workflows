@@ -14,19 +14,24 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Refresh full project lock
+    - name: Install lock exporter
       shell: bash
       env:
-        LOCK: ${{ inputs.lock }}
         PYTHON_VERSION: ${{ inputs.python-version }}
       run: |
         set -euo pipefail
         uv venv --python "$PYTHON_VERSION" "$RUNNER_TEMP/lock-exporter"
         uv pip sync --preview-features pylock --python "$RUNNER_TEMP/lock-exporter/bin/python" \
           --group release "$GITHUB_ACTION_PATH/../pylock.toml"
+    - name: Refresh full project lock
+      shell: bash
+      env:
+        LOCK: ${{ inputs.lock }}
+        PYTHON_VERSION: ${{ inputs.python-version }}
+      run: |
         "$RUNNER_TEMP/lock-exporter/bin/release-creator" locks --output "$LOCK" \
           --tool-python ">=$PYTHON_VERSION"
-    - name: Check refreshed lock
+    - name: Install refreshed release tools
       shell: bash
       env:
         LOCK: ${{ inputs.lock }}
@@ -36,7 +41,16 @@ runs:
         uv venv --python "$PYTHON_VERSION" "$RUNNER_TEMP/release-tools"
         uv pip sync --preview-features pylock --python "$RUNNER_TEMP/release-tools/bin/python" \
           --group release "$LOCK"
+    - name: Run repository checks
+      shell: bash
+      run: >-
         "$RUNNER_TEMP/release-tools/bin/prek" run --all-files
+    - name: Check refreshed lock paths
+      shell: bash
+      env:
+        LOCK: ${{ inputs.lock }}
+      run: |
+        set -euo pipefail
         while IFS= read -r entry; do
           path=${entry:3}
           if [[ "$path" != "$LOCK" ]]; then

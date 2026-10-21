@@ -108,34 +108,9 @@ jobs:
           uv venv --python "$PYTHON_VERSION" "$RUNNER_TEMP/release-tools"
           uv pip sync --preview-features pylock --python "$RUNNER_TEMP/release-tools/bin/python" --group release "$LOCK"
           echo "$RUNNER_TEMP/release-tools/bin" >>"$GITHUB_PATH"
-      - name: Check bot author credits
-        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          test "$(gh api repos/tox-dev/devpi-process/pulls/288 --jq .user.login)" = 'dependabot[bot]'
-          test "$(gh api repos/tox-dev/devpi-process/pulls/288 --jq .user.type)" = Bot
-          mkdir "$RUNNER_TEMP/bot-fragments"
-          printf 'Document a bot-owned dependency fix.\n' >"$RUNNER_TEMP/bot-fragments/+bot.bugfix.md"
-          printf '+bot.bugfix.md\tDependency update (#288)\n' >"$RUNNER_TEMP/bot-commits.tsv"
-          release-creator fragments \
-            --directory "$RUNNER_TEMP/bot-fragments" \
-            --repository tox-dev/devpi-process \
-            --commit-map "$RUNNER_TEMP/bot-commits.tsv" \
-            --resolve-authors
-          printf '## 1.0.0 (today)\n\n### Fixed\n\n- %s\n' \
-            "$(cat "$RUNNER_TEMP/bot-fragments/+bot.bugfix.md")" >"$RUNNER_TEMP/bot-changelog.md"
-          printf '* Dependency update by @dependabot[bot] in https://github.com/tox-dev/devpi-process/pull/288\n' \
-            >"$RUNNER_TEMP/bot-generated.md"
-          release-creator notes \
-            --changelog "$RUNNER_TEMP/bot-changelog.md" \
-            --tag 1.0.0 \
-            --repository tox-dev/devpi-process \
-            --generated-notes "$RUNNER_TEMP/bot-generated.md" >"$RUNNER_TEMP/bot-notes.md"
-          grep -Fq '[#288](https://github.com/tox-dev/devpi-process/pull/288)' "$RUNNER_TEMP/bot-notes.md"
-          ! grep -Fq '@dependabot' "$RUNNER_TEMP/bot-notes.md"
-      - name: Check historical multiple-author credits
+      - if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        uses: $/validate-bot-credits
+      - name: Fetch the multiple-author fixture
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -150,41 +125,42 @@ jobs:
           printf '%s  %s\n' \
             91fccb09c0178e8f44650b86cc5921d5c5fd2d002b428532e74329a63d502bb4 \
             "$RUNNER_TEMP/multiple-author-changelog.rst" | sha256sum --check
+      - name: Render multiple-author notes
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        run: |
+          set -euo pipefail
           release-creator notes \
             --changelog "$RUNNER_TEMP/multiple-author-changelog.rst" \
             --tag 3.10.6 \
             --repository tox-dev/filelock \
             --previous 3.10.5 \
             --issue-role pull >"$RUNNER_TEMP/multiple-author-notes.md"
+      - name: Check historical multiple-author credits
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        run: |
+          set -euo pipefail
           grep -Fq '[#213](https://github.com/tox-dev/filelock/pull/213) by @jahrules and @gaborbernat.' \
             "$RUNNER_TEMP/multiple-author-notes.md"
           test "$(grep -oF 'https://github.com/tox-dev/filelock/pull/213' \
             "$RUNNER_TEMP/multiple-author-notes.md" | wc -l)" -eq 1
-      - name: Create a local release candidate
+      - name: Squash the target pull request
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-        id: fixture
         env:
           BASE_SHA: ${{ steps.target.outputs.base || github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ inputs.head-sha || github.event.pull_request.head.sha }}
-          PR_NUMBER: ${{ inputs.pull-request || github.event.pull_request.number }}
-          FRAGMENTS: ${{ inputs.fragments }}
+        run: |
+          set -euo pipefail
+          git checkout -B release-validation "$BASE_SHA"
+          git -c user.name=release-validation -c user.email=release-validation@users.noreply.github.com merge --squash "$HEAD_SHA"
+      - name: Select validation fragment format
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        id: fragment
+        env:
           CHANGELOG: ${{ inputs.changelog }}
           FIXTURE_ISSUE: ${{ inputs.fixture-issue }}
           ISSUE_ROLE: ${{ inputs.issue-role }}
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          base_sha=${BASE_SHA:-$(git rev-parse origin/main)}
-          head_sha=${HEAD_SHA:-$GITHUB_SHA}
-          if [[ -z "$PR_NUMBER" ]]; then
-            PR_NUMBER=$(gh pr list --head "$GITHUB_REF_NAME" --base main --state open --json number --jq '.[0].number')
-            if [[ -z "$PR_NUMBER" ]]; then
-              echo "::error::no open pull request for $GITHUB_REF_NAME"
-              exit 1
-            fi
-          fi
-          git checkout -B release-validation "$base_sha"
-          git -c user.name=release-validation -c user.email=release-validation@users.noreply.github.com merge --squash "$head_sha"
           case "$CHANGELOG" in
           *.md) extension=md ;;
           *.rst) extension=rst ;;
@@ -193,28 +169,57 @@ jobs:
             exit 1
             ;;
           esac
-          mkdir -p "$FRAGMENTS"
           if [[ -n "$FIXTURE_ISSUE" ]]; then
             if [[ "$extension" != rst || "$ISSUE_ROLE" != issue || "$FIXTURE_ISSUE" == *[!0-9]* ]]; then
               echo '::error::fixture-issue requires an RST changelog, issue role, and numeric issue' >&2
               exit 1
             fi
-            printf "Verify a user-visible release fix for :issue:\`%s\`.\n" "$FIXTURE_ISSUE" \
-              >"$FRAGMENTS/+validation-${PR_NUMBER}.bugfix.$extension"
-          else
-            printf 'Verify a user-visible release fix.\n' >"$FRAGMENTS/+validation-${PR_NUMBER}.bugfix.$extension"
           fi
-          test ! -e "$FRAGMENTS/${PR_NUMBER}.bugfix.$extension"
-          printf 'Verify a numbered release fix.\n' >"$FRAGMENTS/${PR_NUMBER}.bugfix.$extension"
+          echo "extension=$extension" >>"$GITHUB_OUTPUT"
+      - name: Add validation fragments
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        env:
+          PR_NUMBER: ${{ inputs.pull-request || github.event.pull_request.number }}
+          FRAGMENTS: ${{ inputs.fragments }}
+          FIXTURE_ISSUE: ${{ inputs.fixture-issue }}
+          EXTENSION: ${{ steps.fragment.outputs.extension }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$FRAGMENTS"
+          if [[ -n "$FIXTURE_ISSUE" ]]; then
+            printf "Verify a user-visible release fix for :issue:\`%s\`.\n" "$FIXTURE_ISSUE" \
+              >"$FRAGMENTS/+validation-${PR_NUMBER}.bugfix.$EXTENSION"
+          else
+            printf 'Verify a user-visible release fix.\n' >"$FRAGMENTS/+validation-${PR_NUMBER}.bugfix.$EXTENSION"
+          fi
+          test ! -e "$FRAGMENTS/${PR_NUMBER}.bugfix.$EXTENSION"
+          printf 'Verify a numbered release fix.\n' >"$FRAGMENTS/${PR_NUMBER}.bugfix.$EXTENSION"
+      - name: Commit the local release candidate
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        env:
+          PR_NUMBER: ${{ inputs.pull-request || github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
           git add -A
           git -c user.name=release-validation -c user.email=release-validation@users.noreply.github.com commit -m "Validate release pipeline (#${PR_NUMBER})"
+      - name: Create the local release remote
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        run: |
+          set -euo pipefail
           git init --bare "$RUNNER_TEMP/rehearsal.git"
           git remote add rehearsal "$RUNNER_TEMP/rehearsal.git"
           git push rehearsal HEAD:main
+      - name: Record release candidate identity
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        id: fixture
+        env:
+          PR_NUMBER: ${{ inputs.pull-request || github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
           {
             echo "sha=$(git rev-parse HEAD)"
             echo "pr=$PR_NUMBER"
-            echo "extension=$extension"
             gh api "repos/$RELEASE_REPOSITORY/pulls/$PR_NUMBER" --jq '"author=\(.user.login)\nauthor_type=\(.user.type)"'
           } >>"$GITHUB_OUTPUT"
       - name: Introduce an unsupported fragment
@@ -222,7 +227,7 @@ jobs:
         env:
           FRAGMENTS: ${{ inputs.fragments }}
           PR_NUMBER: ${{ steps.fixture.outputs.pr }}
-          EXTENSION: ${{ steps.fixture.outputs.extension }}
+          EXTENSION: ${{ steps.fragment.outputs.extension }}
         run: |
           git mv "$FRAGMENTS/+validation-${PR_NUMBER}.bugfix.$EXTENSION" "$FRAGMENTS/validation-${PR_NUMBER}.bugfix.$EXTENSION"
           git -c user.name=release-validation -c user.email=release-validation@users.noreply.github.com commit -m "Validate fragment rejection"
@@ -458,12 +463,10 @@ jobs:
           issue-role: ${{ inputs.issue-role }}
           generated-notes: ${{ steps.metadata.outputs.path }}
           output: ${{ runner.temp }}/release-notes.md
-      - name: Inspect candidate artifacts
+      - name: Verify release note links
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         env:
           PR_NUMBER: ${{ steps.fixture.outputs.pr }}
-          PR_AUTHOR: ${{ steps.fixture.outputs.author }}
-          PR_AUTHOR_TYPE: ${{ steps.fixture.outputs.author_type }}
           FIXTURE_ISSUE: ${{ inputs.fixture-issue }}
           CHANGELOG: ${{ inputs.changelog }}
           REPOSITORY: ${{ inputs.repository || github.repository }}
@@ -476,6 +479,19 @@ jobs:
               "$RUNNER_TEMP/release-notes.md"
             grep -Fq ":issue:\`${FIXTURE_ISSUE}\`" "$CHANGELOG"
           fi
+          test "$(grep -c '^\*\*Full Changelog\*\*:' "$RUNNER_TEMP/tag-preview-notes.md")" -eq 1
+          if grep -Fq '<!-- Release notes generated' "$RUNNER_TEMP/release-notes.md" "$RUNNER_TEMP/tag-preview-notes.md"; then
+            echo '::error::generated-notes banner in release notes'
+            exit 1
+          fi
+      - name: Verify the numbered fragment
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        env:
+          PR_NUMBER: ${{ steps.fixture.outputs.pr }}
+          CHANGELOG: ${{ inputs.changelog }}
+          REPOSITORY: ${{ inputs.repository || github.repository }}
+        run: |
+          set -euo pipefail
           numbered=$(grep -F 'Verify a numbered release fix' "$RUNNER_TEMP/release-notes.md")
           test "$(grep -oF "https://github.com/${REPOSITORY}/pull/${PR_NUMBER}" <<<"$numbered" | wc -l)" -eq 1
           if grep -Fq "https://github.com/${REPOSITORY}/issues/${PR_NUMBER}" <<<"$numbered"; then
@@ -492,6 +508,16 @@ jobs:
           else
             grep -Fq "https://github.com/${REPOSITORY}/pull/${PR_NUMBER}" <<<"$changelog_numbered"
           fi
+      - name: Verify contributor credits
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        env:
+          PR_AUTHOR: ${{ steps.fixture.outputs.author }}
+          PR_AUTHOR_TYPE: ${{ steps.fixture.outputs.author_type }}
+          CHANGELOG: ${{ inputs.changelog }}
+        run: |
+          set -euo pipefail
+          numbered=$(grep -F 'Verify a numbered release fix' "$RUNNER_TEMP/release-notes.md")
+          changelog_numbered=$(grep -F -A3 'Verify a numbered release fix' "$CHANGELOG")
           if [[ "$PR_AUTHOR_TYPE" == Bot ]]; then
             if grep -Fq "by @${PR_AUTHOR}" "$RUNNER_TEMP/release-notes.md"; then
               echo '::error::bot credit in release notes'
@@ -506,15 +532,11 @@ jobs:
             grep -Fq "by @${PR_AUTHOR}" <<<"$numbered"
             grep -Fq "$PR_AUTHOR" <<<"$changelog_numbered"
           fi
-          if grep -Fq '<!-- Release notes generated' "$RUNNER_TEMP/release-notes.md"; then
-            echo '::error::generated-notes banner in release notes'
-            exit 1
-          fi
-          test "$(grep -c '^\*\*Full Changelog\*\*:' "$RUNNER_TEMP/tag-preview-notes.md")" -eq 1
-          if grep -Fq '<!-- Release notes generated' "$RUNNER_TEMP/tag-preview-notes.md"; then
-            echo '::error::generated-notes banner in tag preview'
-            exit 1
-          fi
+      - name: Record candidate artifacts
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        env:
+          CHANGELOG: ${{ inputs.changelog }}
+        run: |
           sha256sum dist/* >"$RUNNER_TEMP/dist.sha256"
           cp "$CHANGELOG" "$RUNNER_TEMP/changelog"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

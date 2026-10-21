@@ -94,33 +94,46 @@ def test_fixture_creates_rst_fragments_without_directory(
     workflow = yaml.safe_load(
         (Path(__file__).resolve().parents[2] / ".github/workflows/validate-python-release.yaml").read_text()
     )
-    fixture = next(step for step in workflow["jobs"]["validate"]["steps"] if step.get("id") == "fixture")
     output = tmp_path / "output"
-    result = subprocess.run(
-        ["bash", "-c", fixture["run"]],
-        cwd=repository,
-        env=os.environ
-        | environment
-        | {
-            "BASE_SHA": base,
-            "HEAD_SHA": head,
-            "PR_NUMBER": "2",
-            "FRAGMENTS": "docs/changelog",
-            "CHANGELOG": "docs/changelog.rst",
-            "FIXTURE_ISSUE": fixture_issue,
-            "ISSUE_ROLE": issue_role,
-            "GITHUB_SHA": head,
-            "GITHUB_REPOSITORY": "tox-dev/fixture",
-            "RELEASE_REPOSITORY": "tox-dev/fixture",
-            "GITHUB_OUTPUT": str(output),
-            "RUNNER_TEMP": str(tmp_path),
-            "GIT_CONFIG_GLOBAL": os.devnull,
-            "GIT_CONFIG_NOSYSTEM": "1",
-        },
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    result = None
+    for name in (
+        "Squash the target pull request",
+        "Select validation fragment format",
+        "Add validation fragments",
+        "Commit the local release candidate",
+        "Create the local release remote",
+        "Record release candidate identity",
+    ):
+        step = next(item for item in workflow["jobs"]["validate"]["steps"] if item.get("name") == name)
+        result = subprocess.run(
+            ["bash", "-c", step["run"]],
+            cwd=repository,
+            env=os.environ
+            | environment
+            | {
+                "BASE_SHA": base,
+                "HEAD_SHA": head,
+                "PR_NUMBER": "2",
+                "FRAGMENTS": "docs/changelog",
+                "CHANGELOG": "docs/changelog.rst",
+                "FIXTURE_ISSUE": fixture_issue,
+                "ISSUE_ROLE": issue_role,
+                "EXTENSION": "rst",
+                "GITHUB_SHA": head,
+                "GITHUB_REPOSITORY": "tox-dev/fixture",
+                "RELEASE_REPOSITORY": "tox-dev/fixture",
+                "GITHUB_OUTPUT": str(output),
+                "RUNNER_TEMP": str(tmp_path),
+                "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_CONFIG_NOSYSTEM": "1",
+            },
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode:
+            break
+    assert result is not None
     assert (result.returncode == 0) == accepted
     if not accepted:
         assert "fixture-issue requires an RST changelog, issue role, and numeric issue" in result.stderr
@@ -148,9 +161,6 @@ def test_candidate_rejects_numbered_pr_as_issue(
     workflow = yaml.safe_load(
         (Path(__file__).resolve().parents[2] / ".github/workflows/validate-python-release.yaml").read_text()
     )
-    inspect = next(
-        step for step in workflow["jobs"]["validate"]["steps"] if step.get("name") == "Inspect candidate artifacts"
-    )
     issue = " (:issue:`2`)" if duplicate_issue else ""
     issue_link = " ([#2](https://github.com/tox-dev/fixture/issues/2))" if duplicate_issue else ""
     changelog = repository / "changelog.rst"
@@ -165,23 +175,34 @@ def test_candidate_rejects_numbered_pr_as_issue(
     (tmp_path / "tag-preview-notes.md").write_text(notes, encoding="utf-8")
     (repository / "dist").mkdir()
     (repository / "dist" / "package.whl").write_bytes(b"wheel")
-    result = subprocess.run(
-        ["bash", "-c", inspect["run"]],
-        cwd=repository,
-        env=os.environ
-        | {
-            "PR_NUMBER": "2",
-            "PR_AUTHOR": "dependabot[bot]",
-            "PR_AUTHOR_TYPE": "Bot",
-            "FIXTURE_ISSUE": "",
-            "CHANGELOG": "changelog.rst",
-            "REPOSITORY": "tox-dev/fixture",
-            "RUNNER_TEMP": str(tmp_path),
-        },
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    result = None
+    for name in (
+        "Verify release note links",
+        "Verify the numbered fragment",
+        "Verify contributor credits",
+        "Record candidate artifacts",
+    ):
+        step = next(item for item in workflow["jobs"]["validate"]["steps"] if item.get("name") == name)
+        result = subprocess.run(
+            ["bash", "-c", step["run"]],
+            cwd=repository,
+            env=os.environ
+            | {
+                "PR_NUMBER": "2",
+                "PR_AUTHOR": "dependabot[bot]",
+                "PR_AUTHOR_TYPE": "Bot",
+                "FIXTURE_ISSUE": "",
+                "CHANGELOG": "changelog.rst",
+                "REPOSITORY": "tox-dev/fixture",
+                "RUNNER_TEMP": str(tmp_path),
+            },
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode:
+            break
+    assert result is not None
     assert (result.returncode == 0) == accepted
     if not accepted:
         assert "numbered fragment links its pull request as an issue" in result.stdout

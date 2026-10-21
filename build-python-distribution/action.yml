@@ -25,15 +25,20 @@ runs:
         set -euo pipefail
         uv venv --python "$PYTHON_VERSION" "$RUNNER_TEMP/build-tools"
         uv pip sync --preview-features pylock --python "$RUNNER_TEMP/build-tools/bin/python" --group release "$LOCK"
-    - name: Check tagged source
+    - name: Require clean tagged source
       shell: bash
       run: |
-        set -euo pipefail
         if [[ -n $(git status --porcelain) ]]; then
           echo '::error::tagged source is dirty' >&2
           exit 1
         fi
+    - name: Run tagged source checks
+      shell: bash
+      run: >-
         "$RUNNER_TEMP/build-tools/bin/prek" run --all-files
+    - name: Check tagged source remains clean
+      shell: bash
+      run: |
         if [[ -n $(git status --porcelain) ]]; then
           echo '::error::prek changed the tagged source' >&2
           exit 1

@@ -82,13 +82,15 @@ jobs:
         with:
           name: release-tools-lock
           path: ${{ runner.temp }}/release-tools-lock
-      - name: Validate and apply lock patch
+      - name: Apply lock patch
+        run: |
+          git apply --check "$RUNNER_TEMP/release-tools-lock/lock.patch"
+          git apply --index "$RUNNER_TEMP/release-tools-lock/lock.patch"
+      - name: Check lock patch paths
         env:
           LOCK: ${{ inputs.lock }}
         run: |
           set -euo pipefail
-          git apply --check "$RUNNER_TEMP/release-tools-lock/lock.patch"
-          git apply --index "$RUNNER_TEMP/release-tools-lock/lock.patch"
           while IFS= read -r path; do
             if [[ "$path" != "$LOCK" ]]; then
               echo "::error::unexpected lock path: $path" >&2
@@ -96,29 +98,60 @@ jobs:
             fi
           done < <(git diff --cached --name-only)
           git diff --cached --check
-      - name: Open or update dependency pull request
+      - name: Commit refreshed lock
+        env:
+          COMMIT_MESSAGE: ${{ inputs.commit-message }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m "$COMMIT_MESSAGE"
+      - name: Check dependency branch
+        env:
+          BRANCH: ${{ inputs.branch }}
+          BASE: ${{ inputs.base }}
+        run: |
+          set -euo pipefail
+          git check-ref-format --branch "$BRANCH"
+          if [[ "$BRANCH" == "$BASE" ]]; then
+            echo '::error::dependency branch must differ from the base branch' >&2
+            exit 1
+          fi
+      - name: Push dependency branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ inputs.branch }}
+        run: |
+          gh auth setup-git --hostname github.com --force
+          git push --force-with-lease origin "HEAD:refs/heads/$BRANCH"
+      - name: Write dependency pull request body
+        env:
+          PR_BODY: ${{ inputs.pull-request-body }}
+        run: printf '%s\n' "$PR_BODY" >"$RUNNER_TEMP/pull-request.md"
+      - name: Find dependency pull request
+        id: pr
         env:
           GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ inputs.branch }}
           BASE: ${{ inputs.base }}
-          CHECK_WORKFLOW: ${{ inputs.check-workflow }}
-          COMMIT_MESSAGE: ${{ inputs.commit-message }}
+        run: printf 'number=%s\n' "$(gh pr list --base "$BASE" --head "$BRANCH" --state open --json number --jq '.[0].number')" >>"$GITHUB_OUTPUT"
+      - name: Update dependency pull request
+        if: steps.pr.outputs.number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
           PR_TITLE: ${{ inputs.pull-request-title }}
-          PR_BODY: ${{ inputs.pull-request-body }}
-        run: |
-          set -euo pipefail
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m "$COMMIT_MESSAGE"
-          gh auth setup-git --hostname github.com --force
-          git push --force origin "HEAD:$BRANCH"
-          printf '%s\n' "$PR_BODY" >"$RUNNER_TEMP/pull-request.md"
-          pr_number=$(gh pr list --base "$BASE" --head "$BRANCH" --state open --json number --jq '.[0].number')
-          if [[ -n "$pr_number" ]]; then
-            gh pr edit "$pr_number" --title "$PR_TITLE" \
-              --body-file "$RUNNER_TEMP/pull-request.md" --add-label dependencies --add-label 'skip news'
-          else
-            gh pr create --base "$BASE" --head "$BRANCH" --title "$PR_TITLE" \
-              --body-file "$RUNNER_TEMP/pull-request.md" --label dependencies --label 'skip news'
-          fi
-          gh workflow run "$CHECK_WORKFLOW" --ref "$BRANCH"
+        run: gh pr edit "$PR_NUMBER" --title "$PR_TITLE" --body-file "$RUNNER_TEMP/pull-request.md" --add-label dependencies --add-label 'skip news'
+      - name: Open dependency pull request
+        if: steps.pr.outputs.number == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ inputs.branch }}
+          BASE: ${{ inputs.base }}
+          PR_TITLE: ${{ inputs.pull-request-title }}
+        run: gh pr create --base "$BASE" --head "$BRANCH" --title "$PR_TITLE" --body-file "$RUNNER_TEMP/pull-request.md" --label dependencies --label 'skip news'
+      - name: Run dependency branch checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ inputs.branch }}
+          CHECK_WORKFLOW: ${{ inputs.check-workflow }}
+        run: gh workflow run "$CHECK_WORKFLOW" --ref "$BRANCH"
