@@ -102,6 +102,7 @@ def action(
         | {
             "VERSION": version,
             "BUMP": "auto",
+            "TAG_PREFIX": "",
             "CHANGELOG": "CHANGELOG.md",
             "FRAGMENTS": "changelog.d",
             "FORMAT": "none",

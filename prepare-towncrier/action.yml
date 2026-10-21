@@ -4,6 +4,9 @@ inputs:
   bump:
     description: Version bump passed to release-creator tags
     default: auto
+  tag-prefix:
+    description: Prefix for calculated release tags, either empty or v
+    default: ""
   version:
     description: Explicit version for repositories with custom version selection
     default: ""
@@ -34,6 +37,7 @@ runs:
       shell: bash
       env:
         BUMP: ${{ inputs.bump }}
+        TAG_PREFIX: ${{ inputs.tag-prefix }}
         VERSION: ${{ inputs.version }}
         FRAGMENTS: ${{ inputs.fragments }}
       run: |
@@ -43,7 +47,11 @@ runs:
           exit 1
         fi
         if [[ -z "$VERSION" ]]; then
-          VERSION=$(git tag --list | release-creator tags --next "$BUMP" --directory "$FRAGMENTS")
+          args=(--next "$BUMP" --directory "$FRAGMENTS")
+          if [[ -n "$TAG_PREFIX" ]]; then
+            args+=(--prefix "$TAG_PREFIX")
+          fi
+          VERSION=$(git tag --list | release-creator tags "${args[@]}")
         fi
         git tag --list | release-creator tags "$VERSION" --require-newer
         printf 'version=%s\n' "$VERSION" >>"$GITHUB_OUTPUT"

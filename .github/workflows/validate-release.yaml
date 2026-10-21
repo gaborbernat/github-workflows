@@ -124,6 +124,24 @@ jobs:
         run: |
           test "$OUTCOME" = failure
           rm untracked-release-file
+      - id: prefixed_prepare
+        if: github.event_name == 'pull_request'
+        uses: $/prepare-towncrier
+        with:
+          tag-prefix: v
+          changelog: CHANGELOG.md
+          format: markdown
+          patch: ${{ runner.temp }}/prefixed-release.patch
+      - name: Check prefixed release candidate
+        if: github.event_name == 'pull_request'
+        env:
+          VERSION: ${{ steps.prefixed_prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" == v* ]]
+          git tag --list | release-creator tags "$VERSION" --require-newer
+          test -s "$RUNNER_TEMP/prefixed-release.patch"
+          git reset --hard HEAD
       - id: prepare
         if: github.event_name == 'pull_request'
         uses: $/prepare-towncrier

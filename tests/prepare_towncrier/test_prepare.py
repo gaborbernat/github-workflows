@@ -159,6 +159,12 @@ def test_prepare_selects_version(
     assert f"version={expected}" in (tmp_path / "output").read_text()
 
 
+def test_prepare_selects_prefixed_version(repository: Path, tmp_path: Path, action_scripts: Path) -> None:
+    result = action(repository, tmp_path, action_scripts, "prepare-towncrier", version="", TAG_PREFIX="v")
+    assert result.returncode == 0, result.stderr
+    assert "version=v0.2.0" in (tmp_path / "output").read_text()
+
+
 @pytest.mark.parametrize("version", [pytest.param("0.1.0", id="existing"), pytest.param("0.0.1", id="older")])
 def test_prepare_rejects_reused_version(repository: Path, tmp_path: Path, action_scripts: Path, version: str) -> None:
     result = action(repository, tmp_path, action_scripts, "prepare-towncrier", version=version)
