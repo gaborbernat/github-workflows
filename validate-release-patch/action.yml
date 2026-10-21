@@ -22,6 +22,9 @@ inputs:
   expected-sha:
     description: Exact branch commit used for release preparation
     default: ""
+  repository:
+    description: GitHub owner/repository for the rendered changelog
+    default: ""
 runs:
   using: composite
   steps:
@@ -49,6 +52,7 @@ runs:
         PATCH: ${{ inputs.patch }}
         CHANGELOG: ${{ inputs.changelog }}
         FRAGMENTS: ${{ inputs.fragments }}
+        REPOSITORY: ${{ inputs.repository || github.repository }}
       run: |
         set -euo pipefail
         git apply --check "$PATCH"
@@ -69,7 +73,7 @@ runs:
           echo "::error::release patch does not change $CHANGELOG" >&2
           exit 1
         fi
-        if ! release-creator notes --changelog "$CHANGELOG" --tag "$VERSION" --repository "$GITHUB_REPOSITORY" >/dev/null; then
+        if ! release-creator notes --changelog "$CHANGELOG" --tag "$VERSION" --repository "$REPOSITORY" >/dev/null; then
           echo "::error::$CHANGELOG has no valid section for $VERSION" >&2
           exit 1
         fi

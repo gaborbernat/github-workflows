@@ -5,6 +5,39 @@ on:
   pull_request:
     types: [opened, reopened, synchronize, labeled, unlabeled]
   workflow_dispatch:
+    inputs:
+      repository:
+        description: Public owner/repository to rehearse; leave empty to check this repository
+        type: string
+      head-sha:
+        description: Exact target PR head SHA
+        type: string
+      pull-request:
+        description: Target PR number
+        type: string
+      changelog:
+        description: Tracked changelog path
+        type: string
+      fragments:
+        description: Towncrier fragment directory
+        type: string
+      format:
+        description: Changelog format (markdown or rst)
+        type: string
+      artifact-base-url:
+        description: Published artifact URL ending in a slash
+        type: string
+      fixture-issue:
+        description: Optional issue for an RST fixture
+        type: string
+      lock:
+        description: Release-tool lock path
+        default: pylock.toml
+        type: string
+      issue-role:
+        description: RST issue role target (issue or pull)
+        default: issue
+        type: string
 permissions:
   contents: read
 jobs:
@@ -115,10 +148,27 @@ jobs:
       - uses: $/refresh-release-lock
         with:
           python-version: "3.15"
+  external-rehearsal:
+    if: github.event_name == 'workflow_dispatch' && inputs.repository != ''
+    uses: $/.github/workflows/validate-python-release.yaml
+    permissions:
+      contents: read
+      pull-requests: read
+    with:
+      repository: ${{ inputs.repository }}
+      head-sha: ${{ inputs.head-sha }}
+      pull-request: ${{ inputs.pull-request }}
+      changelog: ${{ inputs.changelog }}
+      fragments: ${{ inputs.fragments }}
+      format: ${{ inputs.format }}
+      artifact-base-url: ${{ inputs.artifact-base-url }}
+      fixture-issue: ${{ inputs.fixture-issue }}
+      lock: ${{ inputs.lock }}
+      issue-role: ${{ inputs.issue-role }}
   gate:
     name: Required checks pass
     if: always()
-    needs: [check, changelog, release-dry-run, release-tools-preview]
+    needs: [check, changelog, release-dry-run, release-tools-preview, external-rehearsal]
     runs-on: ubuntu-26.04
     steps:
       - env:
@@ -130,6 +180,7 @@ jobs:
               .value.result == "success" or
               (.key == "changelog" and .value.result == "skipped") or
               (.key == "release-dry-run" and .value.result == "skipped") or
-              (.key == "release-tools-preview" and .value.result == "skipped")
+              (.key == "release-tools-preview" and .value.result == "skipped") or
+              (.key == "external-rehearsal" and .value.result == "skipped")
             )
           ' <<<"$NEEDS_JSON"

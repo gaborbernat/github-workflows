@@ -2,6 +2,18 @@ name: Validate Python release
 on:
   workflow_call:
     inputs:
+      repository:
+        description: Repository to rehearse; defaults to the workflow caller
+        default: ""
+        type: string
+      head-sha:
+        description: Exact target PR head to rehearse
+        default: ""
+        type: string
+      pull-request:
+        description: Target pull request number for external dispatch
+        default: ""
+        type: string
       changelog:
         description: Tracked changelog path
         required: true
@@ -54,12 +66,35 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+    env:
+      RELEASE_REPOSITORY: ${{ inputs.repository || github.repository }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          repository: ${{ inputs.repository || github.repository }}
+          ref: ${{ inputs.head-sha || github.event.pull_request.head.sha || github.sha }}
+      - name: Verify the external PR head
+        if: inputs.repository != ''
+        id: target
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pull-request }}
+          HEAD_SHA: ${{ inputs.head-sha }}
+        run: |
+          set -euo pipefail
+          case "$PR_NUMBER" in
+          '' | *[!0-9]*)
+            echo '::error::pull-request must be numeric' >&2
+            exit 1
+            ;;
+          esac
+          test -n "$HEAD_SHA"
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          metadata=$(gh api "repos/$RELEASE_REPOSITORY/pulls/$PR_NUMBER" --jq '{head:.head.sha,base:.base.sha}')
+          test "$(jq -r .head <<<"$metadata")" = "$HEAD_SHA"
+          echo "base=$(jq -r .base <<<"$metadata")" >>"$GITHUB_OUTPUT"
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           python-version: ${{ inputs.python-version }}
@@ -129,9 +164,9 @@ jobs:
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         id: fixture
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ steps.target.outputs.base || github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ inputs.head-sha || github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ inputs.pull-request || github.event.pull_request.number }}
           FRAGMENTS: ${{ inputs.fragments }}
           CHANGELOG: ${{ inputs.changelog }}
           FIXTURE_ISSUE: ${{ inputs.fixture-issue }}
@@ -180,7 +215,7 @@ jobs:
             echo "sha=$(git rev-parse HEAD)"
             echo "pr=$PR_NUMBER"
             echo "extension=$extension"
-            gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '"author=\(.user.login)\nauthor_type=\(.user.type)"'
+            gh api "repos/$RELEASE_REPOSITORY/pulls/$PR_NUMBER" --jq '"author=\(.user.login)\nauthor_type=\(.user.type)"'
           } >>"$GITHUB_OUTPUT"
       - name: Introduce an unsupported fragment
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
@@ -202,6 +237,7 @@ jobs:
           fragments: ${{ inputs.fragments }}
           format: ${{ inputs.format }}
           patch: ${{ runner.temp }}/release.patch
+          repository: ${{ inputs.repository || github.repository }}
       - name: Check fragment rejection
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         env:
@@ -224,6 +260,7 @@ jobs:
           fragments: ${{ inputs.fragments }}
           format: ${{ inputs.format }}
           patch: ${{ runner.temp }}/release.patch
+          repository: ${{ inputs.repository || github.repository }}
       - name: Check dirty checkout rejection
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         env:
@@ -244,6 +281,7 @@ jobs:
           changelog: ${{ inputs.changelog }}
           format: ${{ inputs.format }}
           patch: ${{ runner.temp }}/missing-fragment.patch
+          repository: ${{ inputs.repository || github.repository }}
       - name: Check missing fragment rejection
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         env:
@@ -257,6 +295,7 @@ jobs:
           fragments: ${{ inputs.fragments }}
           format: ${{ inputs.format }}
           patch: ${{ runner.temp }}/release.patch
+          repository: ${{ inputs.repository || github.repository }}
       - name: Restore release candidate
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         run: git reset --hard HEAD
@@ -276,6 +315,7 @@ jobs:
           fragments: ${{ inputs.fragments }}
           format: ${{ inputs.format }}
           patch: ${{ runner.temp }}/stale-tag.patch
+          repository: ${{ inputs.repository || github.repository }}
       - name: Check stale tag rejection
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         env:
@@ -296,6 +336,7 @@ jobs:
           fragments: ${{ inputs.fragments }}
           remote: rehearsal
           expected-sha: "0000000000000000000000000000000000000000"
+          repository: ${{ inputs.repository || github.repository }}
       - name: Check stale branch rejection
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         env:
@@ -323,6 +364,7 @@ jobs:
           fragments: ${{ inputs.fragments }}
           remote: rehearsal
           expected-sha: ${{ steps.fixture.outputs.sha }}
+          repository: ${{ inputs.repository || github.repository }}
       - name: Check unrelated path rejection
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         env:
@@ -340,6 +382,7 @@ jobs:
           fragments: ${{ inputs.fragments }}
           remote: rehearsal
           expected-sha: ${{ steps.fixture.outputs.sha }}
+          repository: ${{ inputs.repository || github.repository }}
       - name: Commit and tag the local candidate
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         env:
@@ -353,7 +396,7 @@ jobs:
         with:
           tag: ${{ steps.prepare.outputs.version || github.ref_name }}
           changelog: ${{ inputs.changelog }}
-          repository: ${{ github.repository }}
+          repository: ${{ inputs.repository || github.repository }}
           artifact-url: ${{ inputs.artifact-base-url }}${{ steps.prepare.outputs.version || github.ref_name }}/
           artifact-label: ${{ inputs.artifact-label }}
           issue-role: ${{ inputs.issue-role }}
@@ -369,9 +412,10 @@ jobs:
         env:
           PR_NUMBER: ${{ steps.fixture.outputs.pr }}
           PR_AUTHOR: ${{ steps.fixture.outputs.author }}
+          REPOSITORY: ${{ inputs.repository || github.repository }}
         run: |
           printf '* Validate release pipeline by @%s in https://github.com/%s/pull/%s\n' \
-            "$PR_AUTHOR" "$GITHUB_REPOSITORY" "$PR_NUMBER" >"$RUNNER_TEMP/generated-notes.md"
+            "$PR_AUTHOR" "$REPOSITORY" "$PR_NUMBER" >"$RUNNER_TEMP/generated-notes.md"
           echo "path=$RUNNER_TEMP/generated-notes.md" >>"$GITHUB_OUTPUT"
       - id: invalid_tag
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
@@ -381,7 +425,7 @@ jobs:
         with:
           tag: bad tag
           changelog: ${{ inputs.changelog }}
-          repository: ${{ github.repository }}
+          repository: ${{ inputs.repository || github.repository }}
           output: ${{ runner.temp }}/invalid-tag-notes.md
       - name: Check invalid tag rejection
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
@@ -396,7 +440,7 @@ jobs:
         with:
           tag: ${{ steps.prepare.outputs.version }}
           changelog: missing-changelog.md
-          repository: ${{ github.repository }}
+          repository: ${{ inputs.repository || github.repository }}
           output: ${{ runner.temp }}/missing-changelog-notes.md
       - name: Check missing changelog rejection
         if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
@@ -408,7 +452,7 @@ jobs:
         with:
           tag: ${{ steps.prepare.outputs.version || github.ref_name }}
           changelog: ${{ inputs.changelog }}
-          repository: ${{ github.repository }}
+          repository: ${{ inputs.repository || github.repository }}
           artifact-url: ${{ inputs.artifact-base-url }}${{ steps.prepare.outputs.version || github.ref_name }}/
           artifact-label: ${{ inputs.artifact-label }}
           issue-role: ${{ inputs.issue-role }}
@@ -422,22 +466,23 @@ jobs:
           PR_AUTHOR_TYPE: ${{ steps.fixture.outputs.author_type }}
           FIXTURE_ISSUE: ${{ inputs.fixture-issue }}
           CHANGELOG: ${{ inputs.changelog }}
+          REPOSITORY: ${{ inputs.repository || github.repository }}
         run: |
           set -euo pipefail
           test "$(grep -c '^\*\*Full Changelog\*\*:' "$RUNNER_TEMP/release-notes.md")" -eq 1
-          grep -Fq "[#${PR_NUMBER}](https://github.com/${GITHUB_REPOSITORY}/pull/${PR_NUMBER})" "$RUNNER_TEMP/release-notes.md"
+          grep -Fq "[#${PR_NUMBER}](https://github.com/${REPOSITORY}/pull/${PR_NUMBER})" "$RUNNER_TEMP/release-notes.md"
           if [[ -n "$FIXTURE_ISSUE" ]]; then
-            grep -Fq "[#${FIXTURE_ISSUE}](https://github.com/${GITHUB_REPOSITORY}/issues/${FIXTURE_ISSUE})" \
+            grep -Fq "[#${FIXTURE_ISSUE}](https://github.com/${REPOSITORY}/issues/${FIXTURE_ISSUE})" \
               "$RUNNER_TEMP/release-notes.md"
             grep -Fq ":issue:\`${FIXTURE_ISSUE}\`" "$CHANGELOG"
           fi
           numbered=$(grep -F 'Verify a numbered release fix' "$RUNNER_TEMP/release-notes.md")
-          test "$(grep -oF "https://github.com/${GITHUB_REPOSITORY}/pull/${PR_NUMBER}" <<<"$numbered" | wc -l)" -eq 1
+          test "$(grep -oF "https://github.com/${REPOSITORY}/pull/${PR_NUMBER}" <<<"$numbered" | wc -l)" -eq 1
           changelog_numbered=$(grep -F -A3 'Verify a numbered release fix' "$CHANGELOG")
           if [[ "$CHANGELOG" == *.rst ]]; then
             grep -Fq ":pr:\`${PR_NUMBER}\`" <<<"$changelog_numbered"
           else
-            grep -Fq "https://github.com/${GITHUB_REPOSITORY}/pull/${PR_NUMBER}" <<<"$changelog_numbered"
+            grep -Fq "https://github.com/${REPOSITORY}/pull/${PR_NUMBER}" <<<"$changelog_numbered"
           fi
           if [[ "$PR_AUTHOR_TYPE" == Bot ]]; then
             if grep -Fq "by @${PR_AUTHOR}" "$RUNNER_TEMP/release-notes.md"; then

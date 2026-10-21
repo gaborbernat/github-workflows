@@ -123,6 +123,7 @@ def action(
         }
         | extra_env
     )
+    environment["REPOSITORY"] = extra_env.get("REPOSITORY", environment["GITHUB_REPOSITORY"])
     stdout = []
     stderr = []
     for script in sorted(action_scripts.glob(f"{name}-*.sh")):

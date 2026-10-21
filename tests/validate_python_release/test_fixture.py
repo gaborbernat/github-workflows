@@ -11,6 +11,56 @@ from pytest_httpserver import HTTPServer
 
 
 @pytest.mark.parametrize(
+    ("pr_number", "checkout_matches", "github_matches", "accepted"),
+    [
+        pytest.param("2", True, True, True, id="exact-head"),
+        pytest.param("2", True, False, False, id="moved-pr"),
+        pytest.param("2", False, True, False, id="wrong-checkout"),
+        pytest.param("invalid", True, True, False, id="invalid-pr-number"),
+    ],
+)
+def test_external_target_verifies_pr_head(
+    repository: Path,
+    tmp_path: Path,
+    github_api: tuple[HTTPServer, dict[str, str]],
+    pr_number: str,
+    checkout_matches: bool,
+    github_matches: bool,
+    accepted: bool,
+) -> None:
+    server, environment = github_api
+    head = run(repository, "git", "rev-parse", "HEAD").stdout.strip()
+    base = run(repository, "git", "rev-list", "--max-parents=0", "HEAD").stdout.strip()
+    if pr_number == "2" and checkout_matches:
+        server.expect_request("/api/v3/repos/tox-dev/fixture/pulls/2").respond_with_json(
+            {"head": {"sha": head if github_matches else "1" * 40}, "base": {"sha": base}}
+        )
+    workflow = yaml.safe_load(
+        (Path(__file__).resolve().parents[2] / ".github/workflows/validate-python-release.yaml").read_text()
+    )
+    target = next(step for step in workflow["jobs"]["validate"]["steps"] if step.get("id") == "target")
+    output = tmp_path / "output"
+    result = subprocess.run(
+        ["bash", "-c", target["run"]],
+        cwd=repository,
+        env=os.environ
+        | environment
+        | {
+            "RELEASE_REPOSITORY": "tox-dev/fixture",
+            "PR_NUMBER": pr_number,
+            "HEAD_SHA": head if checkout_matches else "0" * 40,
+            "GITHUB_OUTPUT": str(output),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert (result.returncode == 0) == accepted
+    if accepted:
+        assert output.read_text() == f"base={base}\n"
+
+
+@pytest.mark.parametrize(
     ("fixture_issue", "issue_role", "accepted"),
     [
         pytest.param("", "issue", True, id="without-issue"),
@@ -61,6 +111,7 @@ def test_fixture_creates_rst_fragments_without_directory(
             "ISSUE_ROLE": issue_role,
             "GITHUB_SHA": head,
             "GITHUB_REPOSITORY": "tox-dev/fixture",
+            "RELEASE_REPOSITORY": "tox-dev/fixture",
             "GITHUB_OUTPUT": str(output),
             "RUNNER_TEMP": str(tmp_path),
             "GIT_CONFIG_GLOBAL": os.devnull,

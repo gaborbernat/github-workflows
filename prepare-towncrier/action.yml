@@ -25,6 +25,9 @@ inputs:
   patch:
     description: Path for the generated Git patch
     required: true
+  repository:
+    description: GitHub owner/repository used to resolve fragment authors
+    default: ""
 outputs:
   version:
     description: Resolved release version
@@ -60,6 +63,7 @@ runs:
       env:
         LINK_FRAGMENTS: ${{ inputs.link-fragments }}
         FRAGMENTS: ${{ inputs.fragments }}
+        REPOSITORY: ${{ inputs.repository || github.repository }}
         GH_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
@@ -68,7 +72,7 @@ runs:
           exit 1
         fi
         if [[ "$LINK_FRAGMENTS" == true ]]; then
-          release-creator fragments --directory "$FRAGMENTS" --repository "$GITHUB_REPOSITORY" --git --resolve-authors
+          release-creator fragments --directory "$FRAGMENTS" --repository "$REPOSITORY" --git --resolve-authors
         fi
     - name: Build and format changelog
       shell: bash
@@ -76,6 +80,7 @@ runs:
         VERSION: ${{ steps.version.outputs.version }}
         CHANGELOG: ${{ inputs.changelog }}
         FORMAT: ${{ inputs.format }}
+        REPOSITORY: ${{ inputs.repository || github.repository }}
       run: |
         set -euo pipefail
         towncrier build --yes --version "$VERSION"
@@ -91,7 +96,7 @@ runs:
         if [[ -n "$formatter" ]] && ! prek run "$formatter" --files "$CHANGELOG"; then
           prek run "$formatter" --files "$CHANGELOG"
         fi
-        notes=$(release-creator notes --changelog "$CHANGELOG" --tag "$VERSION" --repository "$GITHUB_REPOSITORY")
+        notes=$(release-creator notes --changelog "$CHANGELOG" --tag "$VERSION" --repository "$REPOSITORY")
         if [[ "$notes" != *'### '* ]]; then
           echo '::error::release preparation has no release notes' >&2
           exit 1

@@ -54,7 +54,7 @@ def test_prepare_custom_fragment_directory(repository: Path, tmp_path: Path, act
         version="",
         FRAGMENTS="docs/changelog.d",
         LINK_FRAGMENTS="true",
-        GITHUB_REPOSITORY="tox-dev/github-workflows",
+        REPOSITORY="tox-dev/github-workflows",
     )
     assert result.returncode == 0, result.stderr
     assert "version=0.2.0" in (tmp_path / "output").read_text()

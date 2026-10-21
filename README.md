@@ -71,7 +71,8 @@ on:
 permissions: {}
 jobs:
   upgrade:
-    uses: tox-dev/github-workflows/.github/workflows/upgrade-release-tools.yaml@SHA
+    uses: >-
+      tox-dev/github-workflows/.github/workflows/upgrade-release-tools.yaml@SHA
     permissions:
       contents: write
       pull-requests: write
@@ -157,33 +158,19 @@ uploads. The [read-only validation workflow](.github/workflows/validate-release.
 repository's PR check and tag release. It builds a local candidate for PRs, checks the tagged source, and renders the
 Release body. The tag caller alone has a Contents write job that creates the GitHub Release.
 
-## Validate a Python release in both workflows
+## Validate a Python release
 
 `validate-python-release.yaml` runs the shared Towncrier, package build, and note-rendering path from an exact PR head
-or an existing tag. A PR run squashes the proposed changes onto its base, adds named and numbered bug-fix fragments, and
-creates a commit and tag in the runner. It prepares and checks the changelog patch, runs `prek` on the candidate, builds
-the wheel and sdist, and checks both entries' links and author credits. It also checks rejection of unsupported or
-missing fragments, a dirty checkout, an existing release tag, a stale release branch, a patch with an unrelated file, an
-invalid tag, and a missing changelog. The local commit and tag never leave the runner. The same tagged-source rendering
-step runs on the local PR tag and on a real tag; the PR also renders a separate copy with its contributor fixture. The
-workflow uses `$/` for its own Actions, so a caller pinned to a workflow commit runs those Actions from the same commit.
+or an existing tag. A rehearsal squashes the proposed changes onto its base, adds named and numbered bug-fix fragments,
+and creates a commit and tag in the runner. It prepares and checks the changelog patch, runs `prek` on the candidate,
+builds the wheel and sdist, and checks both entries' links and author credits. It also checks rejection of unsupported
+or missing fragments, a dirty checkout, an existing release tag, a stale release branch, a patch with an unrelated file,
+an invalid tag, and a missing changelog. The local commit and tag never leave the runner. The same tagged-source
+rendering step runs on the local PR tag and on a real tag; the PR also renders a separate copy with its contributor
+fixture. The workflow uses `$/` for its own Actions, so a caller pinned to a workflow commit runs those Actions from the
+same commit.
 
-Call the same pinned workflow from the PR check and the tag publisher's build job:
-
-```yaml
-release-dry-run:
-  if: github.event_name == 'pull_request'
-  uses: >-
-    tox-dev/github-workflows/.github/workflows/validate-python-release.yaml@SHA
-  permissions:
-    contents: read
-    pull-requests: read
-  with:
-    changelog: CHANGELOG.md
-    fragments: changelog.d
-    format: markdown
-    artifact-base-url: https://pypi.org/project/example/
-```
+Call the pinned workflow from the tag publisher's build job:
 
 ```yaml
 build:
@@ -199,14 +186,14 @@ build:
     artifact-base-url: https://pypi.org/project/example/
 ```
 
-The inputs must match in both callers. `changelog` and `fragments` are the paths in `tool.towncrier`; `format` is
-`markdown` for an `mdformat` hook, `rst` for a `docstrfmt` hook, or `none` when no formatter hook applies.
-`artifact-base-url` ends just before the version; the workflow appends `1.2.3/` for tag `1.2.3`. Set it to the package's
-actual PyPI project path. `artifact-label` changes the link text from `PyPI release`; `issue-role` selects whether
-reStructuredText `:issue:` references link to issues or pull requests. `lock` defaults to `pylock.toml` and must have a
-`release` group with `release-creator`, Towncrier, and `prek`. `python-version` defaults to `3.15`; `source` defaults to
-the repository root for `uv build`. `artifact-prefix` defaults to empty; set it while comparing this workflow with an
-existing PR rehearsal so the two jobs use distinct artifact names.
+`changelog` and `fragments` are the paths in `tool.towncrier`; `format` is `markdown` for an `mdformat` hook, `rst` for
+a `docstrfmt` hook, or `none` when no formatter hook applies. `artifact-base-url` ends just before the version; the
+workflow appends `1.2.3/` for tag `1.2.3`. Set it to the package's actual PyPI project path. `artifact-label` changes
+the link text from `PyPI release`; `issue-role` selects whether reStructuredText `:issue:` references link to issues or
+pull requests. `lock` defaults to `pylock.toml` and must have a `release` group with `release-creator`, Towncrier, and
+`prek`. `python-version` defaults to `3.15`; `source` defaults to the repository root for `uv build`. `artifact-prefix`
+defaults to empty; set it while comparing this workflow with an existing PR rehearsal so the two jobs use distinct
+artifact names.
 
 For an RST changelog, use `format: rst` when the caller has a `docstrfmt` hook; otherwise use `format: none`. The
 workflow creates `.rst` test fragments from the changelog suffix and checks RST PR references in the assembled section.
@@ -222,9 +209,8 @@ with:
   artifact-base-url: https://pypi.org/project/filelock/
 ```
 
-The PR caller may also expose `workflow_dispatch` on a non-main branch. In that event the workflow finds the open PR for
-the branch, uses its base and author metadata, and performs the same local rehearsal. It fails when the branch has no
-open PR.
+The shared repository's [Check workflow](.github/workflows/check.yaml) dispatches the rehearsal for a consumer PR. No
+rehearsal job is added to the consumer's PR workflow.
 
 On a tag, it validates the changelog and notes before building, matching the existing caller order. The job uploads
 `python-package-distributions` with the wheel and sdist, and `release-validation-notes` with the body rendered from the
@@ -234,6 +220,34 @@ contributor metadata. The tag-only GitHub Release job must fetch generated notes
 `render-release-notes`, and create the Release after the ecosystem upload. PyPI OIDC stays in the caller's separate
 `release` environment job:
 [PyPI does not support trusted publishing inside reusable workflows](https://docs.pypi.org/trusted-publishers/troubleshooting/#reusable-workflows-on-github).
+
+## Rehearse an exact PR head
+
+Dispatch the shared `check.yaml` workflow against the branch that contains the rehearsal code. The command below runs on
+GitHub's Ubuntu runner and checks the current head of `tox-dev/python-discovery` PR #156. Replace the SHA after every PR
+push; the job fails if the PR has moved. `artifact-base-url` ends before the version, and `format` matches the
+changelog's `prek` formatter.
+
+```bash
+gh workflow run check.yaml \
+  --repo tox-dev/github-workflows \
+  --ref fix/lock-only-patches \
+  -f repository=tox-dev/python-discovery \
+  -f head-sha=PR_HEAD_SHA \
+  -f pull-request=156 \
+  -f changelog=docs/changelog.rst \
+  -f fragments=docs/changelog \
+  -f format=rst \
+  -f artifact-base-url=https://pypi.org/project/python-discovery/
+```
+
+The dispatch accepts `fixture-issue` for an RST issue-link probe, `issue-role` (`issue` or `pull`), and `lock`
+(`pylock.toml` by default). It checks out the requested public repository at the SHA, verifies that GitHub still reports
+that exact PR head, then uses a local bare Git remote for the candidate commit and tag. The job receives Contents read
+and Pull requests read; it has no App key, OIDC publish permission, GitHub Release write, or GitHub push step. It
+uploads `release-dry-run`, `release-validation-notes`, and `python-package-distributions` under the shared repository's
+run. The artifacts include the generated patch, changelog, notes, contributor fixture, hashes, wheel, and sdist.
+Download them and compare their content with the caller's tag path before marking the no-publish gate complete.
 
 ## Prepare Towncrier release
 
@@ -269,6 +283,8 @@ rendering, formatting, or checks fail, or if preparation creates untracked files
   caller whose fragments already contain release links and credits.
 - `patch` **(required)**: Writable path to the Git patch, usually under `runner.temp`. Upload this exact file as an
   artifact for the validation job.
+- `repository`: GitHub owner/repository used for fragment author links; defaults to the workflow caller. The external
+  rehearsal sets this to the consumer repository.
 
 **Output:** `version` is the selected tag string. Use `steps.prepare.outputs.version` as a job output and pass it to
 both later Actions. **Working-tree effect:** Towncrier changes the changelog and consumes fragments; the patch records
@@ -298,6 +314,8 @@ applies the uploaded patch, checks its changed paths, renders the requested vers
 - `remote`: Git remote fetched for the freshness check; default `origin`.
 - `expected-sha`: Commit that preparation checked out. By default the Action uses `GITHUB_SHA`; set this when
   preparation used another commit.
+- `repository`: GitHub owner/repository used to check the changelog's links; defaults to the workflow caller. The
+  external rehearsal sets this to the consumer repository.
 
 **Output:** No named output. **Working-tree effect:** Applies and stages the patch. A failed `prek` run, unexpected
 path, or modification by `prek` fails the job before a write credential is minted.
