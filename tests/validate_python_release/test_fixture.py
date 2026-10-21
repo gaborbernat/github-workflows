@@ -133,3 +133,55 @@ def test_fixture_creates_rst_fragments_without_directory(
     assert (":issue:`31`" in (repository / "docs/changelog/+validation-2.bugfix.rst").read_text()) == bool(
         fixture_issue
     )
+
+
+@pytest.mark.parametrize(
+    ("duplicate_issue", "accepted"),
+    [
+        pytest.param(False, True, id="single-pr-link"),
+        pytest.param(True, False, id="duplicate-issue-link"),
+    ],
+)
+def test_candidate_rejects_numbered_pr_as_issue(
+    repository: Path, tmp_path: Path, duplicate_issue: bool, accepted: bool
+) -> None:
+    workflow = yaml.safe_load(
+        (Path(__file__).resolve().parents[2] / ".github/workflows/validate-python-release.yaml").read_text()
+    )
+    inspect = next(
+        step for step in workflow["jobs"]["validate"]["steps"] if step.get("name") == "Inspect candidate artifacts"
+    )
+    issue = " (:issue:`2`)" if duplicate_issue else ""
+    issue_link = " ([#2](https://github.com/tox-dev/fixture/issues/2))" if duplicate_issue else ""
+    changelog = repository / "changelog.rst"
+    changelog.write_text(f"- Verify a numbered release fix (:pr:`2`){issue}\n", encoding="utf-8")
+    notes = (
+        "### Bug fixes\n\n"
+        "- Verify a numbered release fix ([#2](https://github.com/tox-dev/fixture/pull/2))"
+        f"{issue_link}\n\n"
+        "**Full Changelog**: https://github.com/tox-dev/fixture/commits/1.0.0\n"
+    )
+    (tmp_path / "release-notes.md").write_text(notes, encoding="utf-8")
+    (tmp_path / "tag-preview-notes.md").write_text(notes, encoding="utf-8")
+    (repository / "dist").mkdir()
+    (repository / "dist" / "package.whl").write_bytes(b"wheel")
+    result = subprocess.run(
+        ["bash", "-c", inspect["run"]],
+        cwd=repository,
+        env=os.environ
+        | {
+            "PR_NUMBER": "2",
+            "PR_AUTHOR": "dependabot[bot]",
+            "PR_AUTHOR_TYPE": "Bot",
+            "FIXTURE_ISSUE": "",
+            "CHANGELOG": "changelog.rst",
+            "REPOSITORY": "tox-dev/fixture",
+            "RUNNER_TEMP": str(tmp_path),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert (result.returncode == 0) == accepted
+    if not accepted:
+        assert "numbered fragment links its pull request as an issue" in result.stdout

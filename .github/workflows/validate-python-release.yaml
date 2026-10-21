@@ -478,9 +478,17 @@ jobs:
           fi
           numbered=$(grep -F 'Verify a numbered release fix' "$RUNNER_TEMP/release-notes.md")
           test "$(grep -oF "https://github.com/${REPOSITORY}/pull/${PR_NUMBER}" <<<"$numbered" | wc -l)" -eq 1
+          if grep -Fq "https://github.com/${REPOSITORY}/issues/${PR_NUMBER}" <<<"$numbered"; then
+            echo '::error::numbered fragment links its pull request as an issue'
+            exit 1
+          fi
           changelog_numbered=$(grep -F -A3 'Verify a numbered release fix' "$CHANGELOG")
           if [[ "$CHANGELOG" == *.rst ]]; then
             grep -Fq ":pr:\`${PR_NUMBER}\`" <<<"$changelog_numbered"
+            if grep -Fq ":issue:\`${PR_NUMBER}\`" <<<"$changelog_numbered"; then
+              echo '::error::numbered fragment repeats its pull request as an issue'
+              exit 1
+            fi
           else
             grep -Fq "https://github.com/${REPOSITORY}/pull/${PR_NUMBER}" <<<"$changelog_numbered"
           fi
