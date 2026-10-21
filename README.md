@@ -231,7 +231,7 @@ changelog's `prek` formatter.
 ```bash
 gh workflow run check.yaml \
   --repo tox-dev/github-workflows \
-  --ref fix/lock-only-patches \
+  --ref fix/semantic-release-gate \
   -f repository=tox-dev/python-discovery \
   -f head-sha=PR_HEAD_SHA \
   -f pull-request=156 \
