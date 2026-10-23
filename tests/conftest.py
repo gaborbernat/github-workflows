@@ -55,19 +55,14 @@ def action_scripts(tmp_path_factory: pytest.TempPathFactory) -> Path:
         "prepare-towncrier",
         "validate-release-patch",
         "commit-and-tag",
-        "build-python-distribution",
-        "validate-python-distribution",
         "render-release-notes",
         "select-previous-tag",
         "validate-news",
-        "label-bot-news",
-        "resolve-pr-from-run",
         "refresh-release-lock",
         "install-locked-tools",
-        "install-nab",
         "export-build-constraints",
+        "build-python-distribution",
         "read-towncrier-config",
-        "refresh-hook-pins",
         "publish-github-release",
         "reconcile-pypi-artifacts",
         "publish-jetbrains-marketplace",
@@ -260,11 +255,32 @@ def source_project(repository: Path) -> Path:
     return repository
 
 
+@pytest.fixture
+def build_repository(source_project: Path, nab_executable: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+    project = source_project / "pyproject.toml"
+    release_requirement = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text())[
+        "dependency-groups"
+    ]["release-notes"][0]
+    project.write_text(
+        project.read_text()
+        + f"\n[dependency-groups]\nrelease-notes = [{json.dumps(release_requirement)}]\n"
+        + '\n[tool.nab]\nbase-group = "project-runtime"\nbuild-group = "build"\n'
+    )
+    run(source_project, str(nab_executable), "lock", "--groups", "release-notes", "--output", "pylock.toml")
+    run(source_project, "git", "add", ".")
+    run(source_project, "git", "commit", "-m", "Add package source")
+    run(source_project, "git", "push", "origin", "main")
+    return source_project
+
+
 def action(
     repository: Path,
     tmp_path: Path,
     action_scripts: Path,
     name: str,
+    captured_outputs: dict[str, str] | None = None,
+    /,
     *,
     version: str,
     **extra_env: str,
@@ -281,7 +297,6 @@ def action(
         "FORMAT": action_config.get("inputs", {}).get("format", {}).get("default", "none"),
         "PATCH": str(tmp_path / "release.patch"),
         "EXPECTED_SHA": head,
-        "EXPECTED_PATCH_SHA": "",
         "CHECKS": "true",
         "BRANCH": "main",
         "REMOTE": "origin",
@@ -301,6 +316,7 @@ def action(
         _safe_environment()
         | {
             "GITHUB_OUTPUT": str(tmp_path / "output"),
+            "GITHUB_PATH": str(tmp_path / "github-path"),
             "GITHUB_REPOSITORY": "tox-dev/fixture",
             "GITHUB_SHA": head,
             "RUNNER_TEMP": str(tmp_path),
@@ -310,7 +326,9 @@ def action(
     )
     if "PATH" not in extra_env:
         environment["PATH"] = _tools_path(environment)
-    result, _ = _run_action(repository, action_scripts, name, environment, inputs)
+    result, outputs = _run_action(repository, action_scripts, name, environment, inputs)
+    if captured_outputs is not None:
+        captured_outputs.update(outputs)
     return result
 
 

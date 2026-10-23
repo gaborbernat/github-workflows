@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+import tomlkit
 from conftest import action
 
 
@@ -93,7 +94,7 @@ def test_backend_constraints_match_shared_lock(tmp_path: Path) -> None:
 
 def test_install_lock_tools_rejects_hash_mismatch(tmp_path: Path, action_scripts: Path) -> None:
     source = Path(__file__).resolve().parents[2]
-    action_root = tmp_path / "install-nab"
+    action_root = tmp_path / "install-locked-tools"
     action_root.mkdir()
     lock = (source / "pylock.toml").read_text()
     package = next(package for package in tomllib.loads(lock)["packages"] if package["name"] == "nab")
@@ -102,7 +103,7 @@ def test_install_lock_tools_rejects_hash_mismatch(tmp_path: Path, action_scripts
         tmp_path,
         tmp_path,
         action_scripts,
-        "install-nab",
+        "install-locked-tools",
         version="0.2.0",
         GITHUB_ACTION_PATH=str(action_root),
         UV_CACHE_DIR=str(tmp_path / "cache"),
@@ -111,20 +112,20 @@ def test_install_lock_tools_rejects_hash_mismatch(tmp_path: Path, action_scripts
     assert "Hash mismatch" in result.stderr
 
 
-def test_install_nab_reuses_existing_environment(tmp_path: Path, action_scripts: Path) -> None:
+def test_install_locked_tools_reuses_existing_environment(tmp_path: Path, action_scripts: Path) -> None:
     source = Path(__file__).resolve().parents[2]
-    environment = {"GITHUB_ACTION_PATH": str(source / "install-nab")}
-    first = action(source, tmp_path, action_scripts, "install-nab", version="", **environment)
-    second = action(source, tmp_path, action_scripts, "install-nab", version="", **environment)
+    environment = {"GROUPS": "lock-tools", "VENV": str(tmp_path / "lock-tools"), "LOCK_SOURCE": "shared"}
+    first = action(source, tmp_path, action_scripts, "install-locked-tools", version="", **environment)
+    second = action(source, tmp_path, action_scripts, "install-locked-tools", version="", **environment)
     assert first.returncode == second.returncode == 0, first.stderr + second.stderr
     assert (tmp_path / "lock-tools" / ("Scripts/nab.exe" if os.name == "nt" else "bin/nab")).is_file()
 
 
-def test_install_nab_reuses_windows_shaped_environment(tmp_path: Path, action_scripts: Path) -> None:
+def test_install_locked_tools_reuses_windows_shaped_environment(tmp_path: Path, action_scripts: Path) -> None:
     subprocess.run(["uv", "venv", "--python", "3.15", str(tmp_path / "lock-tools")], check=True, capture_output=True)
     (tmp_path / "lock-tools" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")).unlink()
     result = subprocess.run(
-        ["bash", str(action_scripts / "install-nab-0.sh")],
+        ["bash", str(action_scripts / "install-locked-tools-0.sh")],
         env=os.environ | {"RUNNER_TEMP": str(tmp_path)},
         text=True,
         capture_output=True,
@@ -132,19 +133,6 @@ def test_install_nab_reuses_windows_shaped_environment(tmp_path: Path, action_sc
     )
     assert result.returncode == 0, result.stderr
     assert (tmp_path / "lock-tools/pyvenv.cfg").is_file()
-
-
-def test_install_locked_tools_rejects_empty_groups(tmp_path: Path, action_scripts: Path) -> None:
-    source = Path(__file__).resolve().parents[2]
-    result = install(
-        source,
-        action_scripts,
-        tmp_path,
-        groups="",
-        venv=tmp_path / "tools",
-    )
-    assert result.returncode != 0
-    assert "at least one dependency group is required" in result.stderr
 
 
 def test_install_locked_tools_rejects_missing_group(tmp_path: Path, action_scripts: Path) -> None:
@@ -166,6 +154,7 @@ def test_install_locked_tools_checks_caller_release_creator(tmp_path: Path, loca
     lock.write_text(
         'lock-version = "1.0"\nrequires-python = ">=3.15"\n'
         'dependency-groups = ["release-prepare"]\ncreated-by = "test"\npackages = []\n'
+        "[tool.nab]\ncreated-at = 2026-10-19T00:00:00Z\n"
     )
     source = Path(__file__).resolve().parents[2]
     command = [
@@ -205,6 +194,190 @@ def test_local_tool_source_accepts_versionless_package(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.parametrize(
+    ("replace", "message"),
+    [
+        pytest.param(
+            ("created-at = 2026-10-23", "created-at = 2099-10-23"),
+            "created in the future",
+            id="future-creation",
+        ),
+        pytest.param(
+            ("upload-time = 2026-", "upload-time = 2099-"),
+            "uncooled artifact",
+            id="recent-artifact",
+        ),
+    ],
+)
+def test_install_locked_tools_rejects_uncooled_lock(tmp_path: Path, replace: tuple[str, str], message: str) -> None:
+    source = Path(__file__).resolve().parents[2]
+    lock = (source / "pylock.toml").read_text()
+    assert replace[0] in lock
+    (tmp_path / "pylock.toml").write_text(lock.replace(*replace))
+
+    result = subprocess.run(
+        ["python", str(source / "tools/check_lock_groups.py"), str(tmp_path / "pylock.toml"), "release-check"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert message in result.stderr
+
+
+def test_install_locked_tools_checks_build_group_with_selected_groups(tmp_path: Path) -> None:
+    source = Path(__file__).resolve().parents[2]
+    document = tomlkit.parse((source / "pylock.toml").read_text())
+    package = next(package for package in document["packages"] if package["name"] == "cython")
+    package["wheels"][0]["upload-time"] = datetime(2099, 1, 1, tzinfo=UTC)
+    lock = tmp_path / "pylock.toml"
+    lock.write_text(tomlkit.dumps(document))
+
+    result = subprocess.run(
+        ["python", str(source / "tools/check_lock_groups.py"), str(lock), "release-news"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "uncooled artifact" in result.stderr
+
+
+@pytest.mark.parametrize("change", ["missing", "naive"], ids=["missing", "naive"])
+def test_install_locked_tools_rejects_undated_artifact(tmp_path: Path, change: str) -> None:
+    source = Path(__file__).resolve().parents[2]
+    document = tomlkit.parse((source / "pylock.toml").read_text())
+    package = next(package for package in document["packages"] if package["name"] == "cython")
+    if change == "missing":
+        del package["wheels"][0]["upload-time"]
+    else:
+        package["wheels"][0]["upload-time"] = datetime(2026, 10, 1)
+    lock = tmp_path / "pylock.toml"
+    lock.write_text(tomlkit.dumps(document))
+
+    result = subprocess.run(
+        ["python", str(source / "tools/check_lock_groups.py"), str(lock), "release-news"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "uncooled artifact" in result.stderr
+
+
+def test_install_locked_tools_skips_unselected_package(tmp_path: Path) -> None:
+    source = Path(__file__).resolve().parents[2]
+    document = tomlkit.parse((source / "pylock.toml").read_text())
+    package = next(package for package in document["packages"] if package["name"] == "release-creator")
+    package["wheels"][0]["upload-time"] = datetime(2099, 1, 1, tzinfo=UTC)
+    lock = tmp_path / "pylock.toml"
+    lock.write_text(tomlkit.dumps(document))
+
+    result = subprocess.run(
+        ["python", str(source / "tools/check_lock_groups.py"), str(lock), "release-check"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    "source_kind", ["foreign-host", "insecure-url", "local-path"], ids=["foreign-host", "insecure-url", "local-path"]
+)
+def test_install_locked_tools_rejects_non_pypi_artifact(tmp_path: Path, source_kind: str) -> None:
+    source = Path(__file__).resolve().parents[2]
+    document = tomlkit.parse((source / "pylock.toml").read_text())
+    package = next(package for package in document["packages"] if package["name"] == "cython")
+    artifact = package["wheels"][0]
+    if source_kind == "foreign-host":
+        artifact["url"] = artifact["url"].replace("files.pythonhosted.org", "example.org")
+    elif source_kind == "insecure-url":
+        artifact["url"] = artifact["url"].replace("https://", "http://")
+    else:
+        del artifact["url"]
+        artifact["path"] = "cython.whl"
+    lock = tmp_path / "pylock.toml"
+    lock.write_text(tomlkit.dumps(document))
+
+    result = subprocess.run(
+        ["python", str(source / "tools/check_lock_groups.py"), str(lock), "release-news"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "non-PyPI artifact" in result.stderr
+
+
+def test_install_locked_tools_rejects_artifact_version_mismatch(tmp_path: Path) -> None:
+    source = Path(__file__).resolve().parents[2]
+    document = tomlkit.parse((source / "pylock.toml").read_text())
+    package = next(package for package in document["packages"] if package["name"] == "setuptools")
+    artifact = package["wheels"][0]
+    artifact["url"] = artifact["url"].replace("84.0.0", "0.0.0")
+    lock = tmp_path / "pylock.toml"
+    lock.write_text(tomlkit.dumps(document))
+
+    result = subprocess.run(
+        ["python", str(source / "tools/check_lock_groups.py"), str(lock), "release-news"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "artifact differs from package version" in result.stderr
+
+
+def test_install_locked_tools_rejects_unreviewed_version_under_reviewed_floor(tmp_path: Path) -> None:
+    source = Path(__file__).resolve().parents[2]
+    document = tomlkit.parse((source / "pylock.toml").read_text())
+    package = next(package for package in document["packages"] if package["name"] == "release-creator")
+    package["version"] = "0.6.3"
+    for artifact in [package["sdist"], *package["wheels"]]:
+        artifact["name"] = artifact["name"].replace("0.6.4", "0.6.3")
+        artifact["url"] = artifact["url"].replace("0.6.4", "0.6.3")
+    lock = tmp_path / "pylock.toml"
+    lock.write_text(tomlkit.dumps(document))
+
+    result = subprocess.run(
+        ["python", str(source / "tools/check_lock_groups.py"), str(lock), "release-news"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "uncooled artifact" in result.stderr
+
+
+def test_install_locked_tools_constraints_only_checks_lock_age(tmp_path: Path, action_scripts: Path) -> None:
+    source = Path(__file__).resolve().parents[2]
+    (tmp_path / "pylock.toml").write_text(
+        (source / "pylock.toml").read_text().replace("created-at = 2026-10-23", "created-at = 2099-10-23", 1)
+    )
+    result = action(tmp_path, tmp_path, action_scripts, "install-locked-tools", version="")
+    assert result.returncode != 0
+    assert "created in the future" in result.stderr
+
+
+def test_install_locked_tools_constraints_only_accepts_no_build_group(tmp_path: Path, action_scripts: Path) -> None:
+    (tmp_path / "pylock.toml").write_text(
+        'lock-version = "1.0"\nrequires-python = ">=3.15"\ncreated-by = "test"\n'
+        'dependency-groups = ["project-runtime"]\npackages = []\n'
+        "[tool.nab]\ncreated-at = 2026-10-19T00:00:00Z\n"
+    )
+    result = action(tmp_path, tmp_path, action_scripts, "install-locked-tools", version="")
+    assert result.returncode == 0, result.stderr
+    assert "setuptools==" in next(tmp_path.glob("build-constraints-*.txt")).read_text()
+
+
 def test_caller_version_check_uses_shared_package_marker(tmp_path: Path) -> None:
     source = Path(__file__).resolve().parents[2]
     shared = tmp_path / "shared.toml"
@@ -217,6 +390,7 @@ def test_caller_version_check_uses_shared_package_marker(tmp_path: Path) -> None
     caller.write_text(
         'lock-version = "1.0"\nrequires-python = ">=3.15"\n'
         'dependency-groups = ["release-shell"]\ncreated-by = "test"\npackages = []\n'
+        "[tool.nab]\ncreated-at = 2026-10-19T00:00:00Z\n"
     )
     result = subprocess.run(
         [
@@ -332,6 +506,7 @@ index = "https://pypi.org/simple/"
 [[packages.wheels]]
 name = "probe_only-1.0-py3-none-any.whl"
 url = "https://files.pythonhosted.org/probe_only-1.0-py3-none-any.whl"
+upload-time = 2026-10-01T00:00:00Z
 hashes.sha256 = """
         + f'"{"0" * 64}"\n',
     )
@@ -346,24 +521,11 @@ hashes.sha256 = """
     assert "probe-only==1.0 " in next(tmp_path.glob("build-constraints-*.txt")).read_text()
 
 
-def test_install_locked_tools_accepts_lock_without_build_group(
-    tmp_path: Path, action_scripts: Path, nab_executable: Path, test_package_index: str
-) -> None:
-    (tmp_path / "pyproject.toml").write_text(
-        '[project]\nname = "tool-only"\nversion = "0.1.0"\nrequires-python = ">=3.15"\n'
-        '[dependency-groups]\nrelease-check = ["prek>=0.2"]\n'
-        '[tool.nab]\nbase-group = "project-runtime"\ndefault-groups = []\n'
-        f'[[tool.nab.indexes]]\nname = "fixture"\nurl = "{test_package_index}"\nserialization = "html"\n',
-    )
-    generated = subprocess.run(
-        [str(nab_executable), "lock", "--groups", "release-check", "--output", "pylock.toml"],
-        cwd=tmp_path,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    assert generated.returncode == 0, generated.stderr
-    assert "build" not in tomllib.loads((tmp_path / "pylock.toml").read_text())["dependency-groups"]
+def test_install_locked_tools_accepts_lock_without_build_group(tmp_path: Path, action_scripts: Path) -> None:
+    source = Path(__file__).resolve().parents[2]
+    document = tomlkit.parse((source / "pylock.toml").read_text())
+    document["dependency-groups"].remove("build")
+    (tmp_path / "pylock.toml").write_text(tomlkit.dumps(document))
     result = install(tmp_path, action_scripts, tmp_path, groups="release-check", venv=tmp_path / "tools")
     assert result.returncode == 0, result.stderr
     assert "setuptools==" in next(tmp_path.glob("build-constraints-*.txt")).read_text()

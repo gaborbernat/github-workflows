@@ -58,7 +58,7 @@ def _notes_and_commit(repository: Path, tmp_path: Path) -> tuple[Path, str]:
 
 
 def _release(
-    notes: Path, *, draft: bool, assets: list[dict[str, str]] | None = None
+    notes: Path, *, draft: bool, assets: list[dict[str, str]] | None = None, immutable: bool = False
 ) -> dict[str, str | int | bool | list[dict[str, str]]]:
     return {
         "id": 42,
@@ -67,6 +67,7 @@ def _release(
         "body": notes.read_text(),
         "draft": draft,
         "prerelease": False,
+        "immutable": immutable,
         "assets": assets or [],
     }
 
@@ -117,6 +118,7 @@ def test_existing_published_release_is_verified_without_writes(
     release = _release(
         notes,
         draft=False,
+        immutable=True,
         assets=(
             [{"name": "fixture.zip", "digest": f"sha256:{sha256(b'release archive').hexdigest()}", "state": "uploaded"}]
             if with_asset
@@ -128,8 +130,6 @@ def test_existing_published_release_is_verified_without_writes(
     server.expect_ordered_request(f"{prefix}/releases", query_string="per_page=100", method="GET").respond_with_json(
         [release]
     )
-    for _ in range(2 + int(with_asset)):
-        server.expect_ordered_request(f"{prefix}/releases/42", method="GET").respond_with_json(release)
     result = _request(
         repository,
         tmp_path,
@@ -140,7 +140,7 @@ def test_existing_published_release_is_verified_without_writes(
         assets=assets if with_asset else None,
     )
     assert result.returncode == 0, result.stderr
-    assert [request.method for request, _ in server.log] == ["GET"] * (4 + int(with_asset))
+    assert [request.method for request, _ in server.log] == ["GET", "GET"]
     assert _release_calls(tmp_path) == (
         [("release", "verify-asset", "0.1.0", str(assets / "fixture.zip"), "--repo", "tox-dev/fixture")]
         if with_asset
@@ -182,6 +182,28 @@ def test_existing_release_rejects_changed_content(
     result = _request(repository, tmp_path, action_scripts, notes, commit, environment | release_cli)
     assert result.returncode != 0
     assert [request.method for request, _ in server.log] == ["GET", "GET"]
+    assert not _release_calls(tmp_path)
+
+
+def test_mutable_published_release_is_rechecked(
+    repository: Path,
+    tmp_path: Path,
+    action_scripts: Path,
+    github_api: tuple[HTTPServer, dict[str, str]],
+    release_cli: dict[str, str],
+) -> None:
+    server, environment = github_api
+    notes, commit = _notes_and_commit(repository, tmp_path)
+    release = _release(notes, draft=False)
+    prefix = "/api/v3/repos/tox-dev/fixture"
+    server.expect_ordered_request(f"{prefix}/commits/refs/tags/0.1.0", method="GET").respond_with_json({"sha": commit})
+    server.expect_ordered_request(f"{prefix}/releases", query_string="per_page=100", method="GET").respond_with_json(
+        [release]
+    )
+    server.expect_ordered_request(f"{prefix}/releases/42", method="GET").respond_with_json(release)
+    result = _request(repository, tmp_path, action_scripts, notes, commit, environment | release_cli)
+    assert result.returncode == 0, result.stderr
+    assert [request.method for request, _ in server.log] == ["GET", "GET", "GET"]
     assert not _release_calls(tmp_path)
 
 
@@ -267,6 +289,47 @@ def test_publish_requires_an_existing_draft(
     assert [request.method for request, _ in server.log] == ["GET", "GET"]
 
 
+def test_staged_release_publishes_without_reupload(
+    repository: Path,
+    tmp_path: Path,
+    action_scripts: Path,
+    github_api: tuple[HTTPServer, dict[str, str]],
+    release_cli: dict[str, str],
+) -> None:
+    server, environment = github_api
+    notes, commit = _notes_and_commit(repository, tmp_path)
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    asset_path = assets / "fixture.zip"
+    asset_path.write_bytes(b"release archive")
+    draft = _release(
+        notes,
+        draft=True,
+        assets=[
+            {
+                "name": asset_path.name,
+                "digest": f"sha256:{sha256(asset_path.read_bytes()).hexdigest()}",
+                "state": "uploaded",
+            }
+        ],
+    )
+    prefix = "/api/v3/repos/tox-dev/fixture"
+    server.expect_ordered_request(f"{prefix}/commits/refs/tags/0.1.0", method="GET").respond_with_json({"sha": commit})
+    server.expect_ordered_request(f"{prefix}/releases", query_string="per_page=100", method="GET").respond_with_json(
+        [draft]
+    )
+    server.expect_ordered_request(f"{prefix}/releases/42", method="GET").respond_with_json(draft)
+    server.expect_ordered_request(f"{prefix}/releases/42", method="PATCH").respond_with_json(draft | {"draft": False})
+    result = _request(
+        repository, tmp_path, action_scripts, notes, commit, environment | release_cli, assets=assets, mode="publish"
+    )
+    assert result.returncode == 0, result.stderr
+    assert [request.method for request, _ in server.log] == ["GET", "GET", "GET", "PATCH"]
+    assert _release_calls(tmp_path) == [
+        ("release", "verify-asset", "0.1.0", str(asset_path), "--repo", "tox-dev/fixture")
+    ]
+
+
 @pytest.mark.parametrize("mode", [pytest.param("stage", id="draft"), pytest.param("complete", id="published")])
 def test_missing_release_is_created_then_optionally_published(
     repository: Path,
@@ -288,9 +351,6 @@ def test_missing_release_is_created_then_optionally_published(
         server.expect_ordered_request(f"{prefix}/releases/42", method="PATCH").respond_with_json(
             draft | {"draft": False}
         )
-    server.expect_ordered_request(f"{prefix}/releases/42", method="GET").respond_with_json(
-        draft | {"draft": mode == "stage"}
-    )
     result = _request(repository, tmp_path, action_scripts, notes, commit, environment | release_cli, mode=mode)
     assert result.returncode == 0, result.stderr
     assert [request.method for request, _ in server.log] == [
@@ -299,7 +359,6 @@ def test_missing_release_is_created_then_optionally_published(
         "POST",
         "GET",
         *(["PATCH"] if mode == "complete" else []),
-        "GET",
     ]
     assert not _release_calls(tmp_path)
     request = next(request for request, _ in server.log if request.method == "POST")
@@ -351,9 +410,6 @@ def test_draft_release_uploads_missing_asset(
         server.expect_ordered_request(f"{prefix}/releases/42", method="PATCH").respond_with_json(
             complete | {"draft": False}
         )
-    server.expect_ordered_request(f"{prefix}/releases/42", method="GET").respond_with_json(
-        complete | {"draft": mode == "stage"}
-    )
     result = _request(
         repository,
         tmp_path,
@@ -379,7 +435,6 @@ def test_draft_release_uploads_missing_asset(
         "GET",
         "GET",
         *(["PATCH"] if mode == "complete" else []),
-        "GET",
     ]
 
 
@@ -420,7 +475,6 @@ def test_draft_release_replaces_incomplete_asset(
     server.expect_ordered_request(f"{prefix}/releases/assets/21", method="DELETE").respond_with_json({})
     server.expect_ordered_request(f"{prefix}/releases/42", method="GET").respond_with_json(incomplete | {"assets": []})
     server.expect_ordered_request(f"{prefix}/releases/42", method="GET").respond_with_json(uploaded)
-    server.expect_ordered_request(f"{prefix}/releases/42", method="GET").respond_with_json(uploaded)
     result = _request(
         repository,
         tmp_path,
@@ -433,7 +487,35 @@ def test_draft_release_replaces_incomplete_asset(
     )
     assert result.returncode == 0, result.stderr
     assert ("release", "upload", "0.1.0", str(asset_path), "--repo", "tox-dev/fixture") in _release_calls(tmp_path)
-    assert [request.method for request, _ in server.log] == ["GET", "GET", "DELETE", "GET", "GET", "GET"]
+    assert [request.method for request, _ in server.log] == ["GET", "GET", "DELETE", "GET", "GET"]
+
+
+def test_changed_draft_stops_before_upload(
+    repository: Path,
+    tmp_path: Path,
+    action_scripts: Path,
+    github_api: tuple[HTTPServer, dict[str, str]],
+    release_cli: dict[str, str],
+) -> None:
+    server, environment = github_api
+    notes, commit = _notes_and_commit(repository, tmp_path)
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    (assets / "fixture.zip").write_bytes(b"release archive")
+    draft = _release(notes, draft=True)
+    prefix = "/api/v3/repos/tox-dev/fixture"
+    server.expect_ordered_request(f"{prefix}/commits/refs/tags/0.1.0", method="GET").respond_with_json({"sha": commit})
+    server.expect_ordered_request(f"{prefix}/releases", query_string="per_page=100", method="GET").respond_with_json(
+        [draft]
+    )
+    for _ in range(6):
+        server.expect_ordered_request(f"{prefix}/releases/42", method="GET").respond_with_json(
+            draft | {"body": "Human-edited notes.\n"}
+        )
+    result = _request(repository, tmp_path, action_scripts, notes, commit, environment | release_cli, assets=assets)
+    assert result.returncode != 0
+    assert not _release_calls(tmp_path)
+    assert [request.method for request, _ in server.log] == ["GET"] * 8
 
 
 def test_failed_upload_deletes_partial_asset_before_retry(
@@ -472,7 +554,7 @@ def test_failed_upload_deletes_partial_asset_before_retry(
     for release in (draft, partial, partial):
         server.expect_ordered_request(f"{prefix}/releases/42", method="GET").respond_with_json(release)
     server.expect_ordered_request(f"{prefix}/releases/assets/21", method="DELETE").respond_with_json({})
-    for _ in range(3):
+    for _ in range(2):
         server.expect_ordered_request(f"{prefix}/releases/42", method="GET").respond_with_json(complete)
 
     result = _request(
@@ -486,7 +568,7 @@ def test_failed_upload_deletes_partial_asset_before_retry(
         mode="stage",
     )
     assert result.returncode == 0, result.stderr
-    assert [request.method for request, _ in server.log] == ["GET"] * 5 + ["DELETE"] + ["GET"] * 2
+    assert [request.method for request, _ in server.log] == ["GET"] * 5 + ["DELETE", "GET"]
     assert _release_calls(tmp_path) == [
         ("release", "upload", "0.1.0", str(asset_path), "--repo", "tox-dev/fixture"),
         ("release", "upload", "0.1.0", str(asset_path), "--repo", "tox-dev/fixture"),
@@ -630,6 +712,7 @@ def test_failed_asset_attestation_is_reported(
     release = _release(
         notes,
         draft=False,
+        immutable=True,
         assets=[
             {
                 "name": asset_path.name,
@@ -643,8 +726,6 @@ def test_failed_asset_attestation_is_reported(
     server.expect_ordered_request(f"{prefix}/releases", query_string="per_page=100", method="GET").respond_with_json(
         [release]
     )
-    for _ in range(3):
-        server.expect_ordered_request(f"{prefix}/releases/42", method="GET").respond_with_json(release)
     result = _request(
         repository,
         tmp_path,
@@ -656,6 +737,7 @@ def test_failed_asset_attestation_is_reported(
     )
     assert result.returncode != 0
     assert "release asset attestation could not be verified" in result.stderr
+    assert [request.method for request, _ in server.log] == ["GET", "GET"]
     assert (
         _release_calls(tmp_path)
         == [("release", "verify-asset", "0.1.0", str(asset_path), "--repo", "tox-dev/fixture")] * 6

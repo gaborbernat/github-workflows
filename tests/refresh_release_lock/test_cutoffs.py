@@ -3,9 +3,14 @@ from __future__ import annotations
 import subprocess
 import sys
 import tomllib
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+import tomlkit
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from tools.nab_cutoffs import remove_expired_cutoffs
 
 
 @pytest.fixture
@@ -14,8 +19,10 @@ def cutoff_project(tmp_path: Path) -> Path:
     project.write_text(
         '[project]\nname = "example"\nversion = "0.1"\n'
         '[tool.nab]\nuploaded-prior-to = "P7D"\n'
+        '[tool.nab.packages.nab]\nuploaded-prior-to = "2026-01-01T00:00:00Z"\n'
         '[tool.nab.packages.old]\nuploaded-prior-to = "2026-01-01T00:00:00Z"\n'
         '[tool.nab.packages.new]\nuploaded-prior-to = "2999-01-01T00:00:00Z"\n'
+        '[[tool.nab.package-rules]]\nmatch = ["nab-index"]\nuploaded-prior-to = "2026-01-01T00:00:00Z"\n'
         '[[tool.nab.package-rules]]\nmatch = ["old-rule"]\nuploaded-prior-to = "2026-01-01T00:00:00Z"\n'
         '[[tool.nab.package-rules]]\nmatch = ["new-rule"]\nuploaded-prior-to = "2999-01-01T00:00:00Z"\n',
     )
@@ -30,7 +37,7 @@ def cutoff_project(tmp_path: Path) -> Path:
     return project
 
 
-def test_expire_cutoffs_removes_only_expired_rules(cutoff_project: Path) -> None:
+def test_expire_cutoffs_preserves_older_deliberate_holds(cutoff_project: Path) -> None:
     source = Path(__file__).resolve().parents[2] / "tools"
     result = subprocess.run(
         [sys.executable, str(source / "expire_cutoffs.py"), str(cutoff_project)],
@@ -40,56 +47,50 @@ def test_expire_cutoffs_removes_only_expired_rules(cutoff_project: Path) -> None
     )
     assert result.returncode == 0, result.stderr
     nab = tomllib.loads(cutoff_project.read_text())["tool"]["nab"]
-    assert set(nab["packages"]) == {"new"}
-    assert [rule["match"] for rule in nab["package-rules"]] == [["new-rule"]]
+    assert set(nab["packages"]) == {"nab", "old", "new"}
+    assert [rule["match"] for rule in nab["package-rules"]] == [["nab-index"], ["old-rule"], ["new-rule"]]
 
 
 def test_expire_cutoffs_removes_empty_package_table(cutoff_project: Path) -> None:
-    cutoff_project.write_text(
-        cutoff_project.read_text().replace('[tool.nab.packages.new]\nuploaded-prior-to = "2999-01-01T00:00:00Z"\n', "")
+    project = cutoff_project.read_text().replace(
+        '[tool.nab.packages.nab]\nuploaded-prior-to = "2026-01-01T00:00:00Z"\n',
+        '[tool.nab.packages.nab]\nuploaded-prior-to = "2026-10-18T05:45:09Z"\n',
     )
-    source = Path(__file__).resolve().parents[2] / "tools"
-    result = subprocess.run(
-        [sys.executable, str(source / "expire_cutoffs.py"), str(cutoff_project)],
-        text=True,
-        capture_output=True,
-        check=False,
+    project = project.replace('[tool.nab.packages.old]\nuploaded-prior-to = "2026-01-01T00:00:00Z"\n', "")
+    project = project.replace('[tool.nab.packages.new]\nuploaded-prior-to = "2999-01-01T00:00:00Z"\n', "")
+
+    updated = remove_expired_cutoffs(project, datetime(2026, 11, 1, tzinfo=UTC))
+
+    assert "packages" not in tomllib.loads(updated)["tool"]["nab"]
+
+
+@pytest.mark.parametrize("reviewed", ["2026-10-23T02:44:40Z", "2026-10-23T16:52:06Z"])
+def test_expire_cutoffs_removes_each_reviewed_release_creator_floor(reviewed: str) -> None:
+    project = (
+        '[tool.nab]\nuploaded-prior-to = "P7D"\n'
+        f'[tool.nab.packages.release-creator]\nuploaded-prior-to = "{reviewed}"\n'
     )
 
-    assert result.returncode == 0, result.stderr
-    assert "packages" not in tomllib.loads(cutoff_project.read_text())["tool"]["nab"]
+    updated = remove_expired_cutoffs(project, datetime(2026, 11, 1, tzinfo=UTC))
+
+    assert "packages" not in tomllib.loads(updated)["tool"]["nab"]
 
 
 def test_expire_cutoffs_accepts_toml_datetime(cutoff_project: Path) -> None:
-    cutoff_project.write_text(cutoff_project.read_text().replace('"2026-01-01T00:00:00Z"', "2026-01-01T00:00:00Z"))
-    source = Path(__file__).resolve().parents[2] / "tools"
-    result = subprocess.run(
-        [sys.executable, str(source / "expire_cutoffs.py"), str(cutoff_project)],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert "old" not in tomllib.loads(cutoff_project.read_text())["tool"]["nab"]["packages"]
-
-
-def test_verify_cutoff_patch_accepts_expired_only(cutoff_project: Path) -> None:
-    source = Path(__file__).resolve().parents[2] / "tools"
-    subprocess.run([sys.executable, str(source / "expire_cutoffs.py"), str(cutoff_project)], check=True)
-    result = subprocess.run(
-        [sys.executable, str(source / "verify_cutoff_patch.py")],
-        cwd=cutoff_project.parent,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr
-
-
-def test_verify_cutoff_patch_accepts_subset_expired(cutoff_project: Path) -> None:
     cutoff_project.write_text(
-        cutoff_project.read_text().replace('[tool.nab.packages.old]\nuploaded-prior-to = "2026-01-01T00:00:00Z"\n', "")
+        cutoff_project.read_text().replace(
+            '[tool.nab.packages.nab]\nuploaded-prior-to = "2026-01-01T00:00:00Z"',
+            "[tool.nab.packages.nab]\nuploaded-prior-to = 2026-10-18T05:45:09Z",
+        ),
+    )
+    updated = remove_expired_cutoffs(cutoff_project.read_text(), datetime(2026, 11, 1, tzinfo=UTC))
+
+    assert "nab" not in tomllib.loads(updated)["tool"]["nab"]["packages"]
+
+
+def test_verify_cutoff_patch_rejects_deliberate_hold_removal(cutoff_project: Path) -> None:
+    cutoff_project.write_text(
+        cutoff_project.read_text().replace('[tool.nab.packages.nab]\nuploaded-prior-to = "2026-01-01T00:00:00Z"\n', "")
     )
     source = Path(__file__).resolve().parents[2] / "tools"
     result = subprocess.run(
@@ -100,7 +101,8 @@ def test_verify_cutoff_patch_accepts_subset_expired(cutoff_project: Path) -> Non
         check=False,
     )
 
-    assert result.returncode == 0, result.stderr
+    assert result.returncode != 0
+    assert "changes beyond expired Nab cutoffs" in result.stderr
 
 
 def test_verify_cutoff_patch_rejects_other_metadata(cutoff_project: Path) -> None:
@@ -137,8 +139,10 @@ def test_check_nab_lock_rejects_package_change(tmp_path: Path) -> None:
     source = Path(__file__).resolve().parents[2] / "tools/check_nab_lock.py"
     committed = tmp_path / "committed.toml"
     generated = tmp_path / "generated.toml"
-    committed.write_text('packages = ["safe"]\n[tool.nab]\ncommand-line = ["--upgrade"]\n')
-    generated.write_text('packages = ["changed"]\n[tool.nab]\ncommand-line = []\n')
+    committed.write_text(
+        'packages = ["safe"]\n[tool.nab]\ncreated-at = 2026-10-01T00:00:00Z\ncommand-line = ["--upgrade"]\n'
+    )
+    generated.write_text('packages = ["changed"]\n[tool.nab]\ncreated-at = 2026-10-01T00:00:00Z\ncommand-line = []\n')
     result = subprocess.run(
         [sys.executable, str(source), str(committed), str(generated)],
         text=True,
@@ -149,13 +153,53 @@ def test_check_nab_lock_rejects_package_change(tmp_path: Path) -> None:
     assert "regenerated Nab lock differs" in result.stderr
 
 
+def test_check_nab_lock_rejects_future_creation(tmp_path: Path) -> None:
+    source = Path(__file__).resolve().parents[2] / "tools/check_nab_lock.py"
+    lock = tmp_path / "pylock.toml"
+    lock.write_text("[tool.nab]\ncreated-at = 2099-01-01T00:00:00Z\n")
+    result = subprocess.run(
+        [sys.executable, str(source), str(lock), str(lock)], text=True, capture_output=True, check=False
+    )
+    assert result.returncode != 0
+    assert "created in the future" in result.stderr
+
+
+def test_check_nab_lock_rejects_forged_upload_time(
+    build_repository: Path, nab_executable: Path, tmp_path: Path
+) -> None:
+    source = Path(__file__).resolve().parents[2] / "tools/check_nab_lock.py"
+    lock = build_repository / "pylock.toml"
+    document = tomlkit.parse(lock.read_text())
+    package = next(item for item in document["packages"] if item["name"] == "hatchling")
+    package["wheels"][0]["upload-time"] = "2020-01-01T00:00:00Z"
+    lock.write_text(tomlkit.dumps(document))
+    committed = tmp_path / "committed.toml"
+    committed.write_bytes(lock.read_bytes())
+
+    regenerated = subprocess.run(
+        [str(nab_executable), "lock", "--groups", "release-notes", "--output", "pylock.toml"],
+        cwd=build_repository,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert regenerated.returncode == 0, regenerated.stderr
+    result = subprocess.run(
+        [sys.executable, str(source), str(committed), str(lock)], text=True, capture_output=True, check=False
+    )
+    assert result.returncode != 0
+    assert "regenerated Nab lock differs" in result.stderr
+
+
 @pytest.mark.parametrize(
     ("package", "timestamp", "accepted"),
     [
-        pytest.param("nab", "2026-10-19T00:00:00Z", True, id="reviewed-nab"),
+        pytest.param("nab", "2026-10-18T05:45:09Z", True, id="reviewed-nab"),
+        pytest.param("nab", "2026-10-19T00:00:00Z", False, id="unreviewed-nab"),
         pytest.param("nab", "2026-10-20T00:00:00Z", False, id="extended-nab"),
         pytest.param("release-creator", "2026-10-23T02:44:40Z", True, id="reviewed-release-creator"),
-        pytest.param("release-creator", "2026-10-23T02:44:41Z", False, id="extended-release-creator"),
+        pytest.param("release-creator", "2026-10-23T16:52:06Z", True, id="reviewed-release-creator-0.6.4"),
+        pytest.param("release-creator", "2026-10-23T16:52:07Z", False, id="extended-release-creator"),
         pytest.param("unreviewed", "2026-10-22T00:00:00Z", False, id="new-package"),
     ],
 )

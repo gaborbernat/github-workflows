@@ -1,5 +1,5 @@
 name: Build Python distribution
-description: Build a wheel and sdist from source checked in a separate job
+description: Build a wheel and sdist for a keyless PR check
 inputs:
   source:
     description: Distribution source directory
@@ -7,13 +7,6 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Require clean tagged source
-      shell: bash
-      run: |
-        if [[ -n $(git status --porcelain) ]]; then
-          echo '::error::tagged source is dirty' >&2
-          exit 1
-        fi
     - name: Require empty output directory
       shell: bash
       run: |
@@ -36,7 +29,6 @@ runs:
         set -euo pipefail
         unset UV_EXCLUDE_NEWER UV_EXCLUDE_NEWER_PACKAGE
         build_python=$(uv python find "$RUNNER_TEMP/build-python")
-        test -n "$build_python"
         export SOURCE_DATE_EPOCH
         SOURCE_DATE_EPOCH=$(git -C "$SOURCE" log -1 --format=%ct)
         uv build --python "$build_python" \

@@ -13,14 +13,15 @@ from conftest import action
 def test_export_build_constraints_uses_checked_in_locks(tmp_path: Path, action_scripts: Path) -> None:
     source = Path(__file__).resolve().parents[2]
     (tmp_path / "pylock.toml").write_bytes((source / "pylock.toml").read_bytes())
-    result = action(tmp_path, tmp_path, action_scripts, "export-build-constraints", version="")
+    outputs: dict[str, str] = {}
+    result = action(tmp_path, tmp_path, action_scripts, "export-build-constraints", outputs, version="")
     assert result.returncode == 0, result.stderr
-    output = next(tmp_path.glob("build-constraints-*.txt"))
+    output = Path(outputs["path"])
     constraints = output.read_text()
     assert "cython==" in constraints
     assert "setuptools==" in constraints
     assert "pytest==" not in constraints
-    assert (tmp_path / "output").read_text() == f"path={output}\n"
+    assert output == next(tmp_path.glob("build-constraints-*.txt"))
 
 
 @pytest.mark.parametrize(
@@ -125,8 +126,51 @@ def test_export_build_constraints_selects_explicit_targets(tmp_path: Path, platf
     assert output.read_text() == f"example==1.0 --hash=sha256:{'0' * 64}\n"
 
 
-def test_export_build_constraints_rejects_different_target_versions(tmp_path: Path) -> None:
-    source = Path(__file__).resolve().parents[2]
+def test_export_build_constraints_action_selects_secondary_lock(tmp_path: Path, action_scripts: Path) -> None:
+    write_matrix_lock(tmp_path / "pylock.build.toml")
+
+    outputs: dict[str, str] = {}
+    result = action(
+        tmp_path,
+        tmp_path,
+        action_scripts,
+        "export-build-constraints",
+        outputs,
+        version="",
+        LOCK="pylock.build.toml",
+        TARGET_PLATFORM="macos_arm64",
+        TARGETS="3.15.0:cpython",
+    )
+
+    assert result.returncode == 0, result.stderr
+    output = Path(outputs["path"])
+    assert output.read_text() == f"example==1.0 --hash=sha256:{'0' * 64}\n"
+
+
+@pytest.mark.parametrize("groups", ["", "release-check"], ids=["export-only", "with-installed-group"])
+def test_export_build_constraints_rejects_uncooled_secondary_lock(
+    tmp_path: Path, action_scripts: Path, groups: str
+) -> None:
+    lock = tmp_path / "pylock.build.toml"
+    write_matrix_lock(lock)
+    lock.write_text(lock.read_text().replace("2026-10-01T00:00:00Z", "2026-10-22T00:00:00Z"))
+    result = action(
+        tmp_path,
+        tmp_path,
+        action_scripts,
+        "install-locked-tools" if groups else "export-build-constraints",
+        version="",
+        LOCK="pylock.build.toml",
+        LOCK_SOURCE="shared",
+        CONSTRAINTS_LOCK="pylock.build.toml",
+        GROUPS=groups,
+        VENV=str(tmp_path / "tools"),
+    )
+    assert result.returncode != 0
+    assert "uncooled artifact" in result.stderr
+
+
+def test_export_build_constraints_rejects_different_target_versions(tmp_path: Path, action_scripts: Path) -> None:
     lock = tmp_path / "pylock.build.toml"
     write_matrix_lock(lock)
     lock.write_text(
@@ -141,24 +185,20 @@ def test_export_build_constraints_rejects_different_target_versions(tmp_path: Pa
             [[packages.wheels]]
             name = "example-2.0-py3-none-any.whl"
             url = "https://files.pythonhosted.org/example-2.0-py3-none-any.whl"
+            upload-time = 2026-10-01T00:00:00Z
             hashes.sha256 = "1111111111111111111111111111111111111111111111111111111111111111"
             """,
         ),
     )
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(source / "tools/build_constraints.py"),
-            "--target-platform",
-            "macos_arm64",
-            "--targets",
-            "3.15.0:cpython 3.11.0:pypy",
-            str(tmp_path / "constraints.txt"),
-            str(lock),
-        ],
-        text=True,
-        capture_output=True,
-        check=False,
+    result = action(
+        tmp_path,
+        tmp_path,
+        action_scripts,
+        "export-build-constraints",
+        version="",
+        LOCK="pylock.build.toml",
+        TARGET_PLATFORM="macos_arm64",
+        TARGETS="3.15.0:cpython 3.11.0:pypy",
     )
     assert result.returncode != 0
     assert "versions differ across requested targets" in result.stderr
@@ -220,7 +260,10 @@ def write_matrix_lock(path: Path) -> None:
             [[packages.wheels]]
             name = "example-1.0-py3-none-any.whl"
             url = "https://files.pythonhosted.org/example-1.0-py3-none-any.whl"
+            upload-time = 2026-10-01T00:00:00Z
             hashes.sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+            [tool.nab]
+            created-at = 2026-10-23T00:00:00Z
             """,
         ),
     )

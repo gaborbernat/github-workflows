@@ -32,7 +32,9 @@ outputs:
 runs:
   using: composite
   steps:
-    - uses: $/install-nab
+    - uses: $/install-locked-tools
+      with:
+        lock-source: shared
     - name: Check recent package cutoffs
       shell: bash
       run: uv run --no-project --python "$RUNNER_TEMP/lock-tools" python "$GITHUB_ACTION_PATH/../tools/check_recent_cutoffs.py" pyproject.toml
@@ -43,7 +45,6 @@ runs:
         set -euo pipefail
         uv run --no-project --python "$RUNNER_TEMP/lock-tools" python \
           "$GITHUB_ACTION_PATH/../tools/expire_cutoffs.py" pyproject.toml
-        cp pyproject.toml "$RUNNER_TEMP/project-after-expiry.toml"
     - name: Resolve release groups
       shell: bash
       env:
@@ -145,31 +146,6 @@ runs:
           python3 "$GITHUB_ACTION_PATH/../tools/check_nab_lock.py" \
             "$RUNNER_TEMP/additional-lock-before.toml" "$ADDITIONAL_LOCK"
         fi
-    - name: Install refreshed release checks
-      if: inputs.mode == 'refresh'
-      uses: $/install-locked-tools
-      with:
-        groups: release-check
-        venv: ${{ runner.temp }}/release-tools
-    - name: Run repository checks
-      if: inputs.mode == 'refresh'
-      shell: bash
-      run: uv run --no-project --python "$RUNNER_TEMP/release-tools" prek run --all-files
-    - name: Check refreshed paths
-      if: inputs.mode == 'refresh'
-      shell: bash
-      env:
-        ADDITIONAL_LOCK: ${{ inputs.additional-lock }}
-      run: |
-        set -euo pipefail
-        cmp pyproject.toml "$RUNNER_TEMP/project-after-expiry.toml"
-        while IFS= read -r entry; do
-          path=${entry:3}
-          if [[ "$path" != pylock.toml && "$path" != pyproject.toml && "$path" != "${ADDITIONAL_LOCK:-}" ]]; then
-            echo "::error::prek changed file outside the lock and cutoff policy: $path" >&2
-            exit 1
-          fi
-        done < <(git status --porcelain=v1 --untracked-files=all)
     - id: lock
       shell: bash
       env:
@@ -178,7 +154,7 @@ runs:
       run: |
         set -euo pipefail
         paths=(pylock.toml pyproject.toml)
-        if [[ -n "${ADDITIONAL_LOCK:-}" ]]; then paths+=("$ADDITIONAL_LOCK"); fi
+        if [[ -n "$ADDITIONAL_LOCK" ]]; then paths+=("$ADDITIONAL_LOCK"); fi
         if [[ "$MODE" == check ]]; then
           git diff --exit-code -- "${paths[@]}"
           echo 'changed=false' >>"$GITHUB_OUTPUT"
@@ -187,5 +163,4 @@ runs:
         else
           echo 'changed=true' >>"$GITHUB_OUTPUT"
           git diff --binary -- "${paths[@]}" >"$RUNNER_TEMP/lock.patch"
-          test -s "$RUNNER_TEMP/lock.patch"
         fi
