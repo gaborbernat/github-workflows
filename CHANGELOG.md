@@ -2,6 +2,24 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-1-0-2"></a>
+
+## 1.0.2 (2026-10-23)
+
+<a name="release-1-0-2-changes"></a>
+
+### Changes
+
+- Accept release-creator 0.6.6 in caller locks under its reviewed PyPI upload cutoff
+  ([#8](https://github.com/tox-dev/github-workflows/pull/8)) by [@gaborbernat](https://github.com/gaborbernat).
+
+<a name="release-1-0-2-documentation"></a>
+
+### Documentation
+
+- Correct the documented release validation and previous-tag Action interfaces
+  ([#8](https://github.com/tox-dev/github-workflows/pull/8)) by [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-1-0-1"></a>
 
 ## 1.0.1 (2026-10-23)
