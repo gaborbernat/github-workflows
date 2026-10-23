@@ -2,6 +2,29 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-1-0-3"></a>
+
+## 1.0.3 (2026-10-23)
+
+<a name="release-1-0-3-fixed"></a>
+
+### Fixed
+
+- Expose locked release commands without replacing the runner's Python, pip, or uv executables in later workflow steps
+  ([#9](https://github.com/tox-dev/github-workflows/pull/9)) by [@gaborbernat](https://github.com/gaborbernat).
+- Reject a yanked PyPI file even when its yank reason is empty
+  ([#9](https://github.com/tox-dev/github-workflows/pull/9)) by [@gaborbernat](https://github.com/gaborbernat).
+- Retry incomplete PyPI listing responses while waiting for published files, then report a concise error if the wait
+  expires ([#9](https://github.com/tox-dev/github-workflows/pull/9)) by [@gaborbernat](https://github.com/gaborbernat).
+
+<a name="release-1-0-3-documentation"></a>
+
+### Documentation
+
+- Document the build-constraint inputs of `install-locked-tools` and correct the 1.0.0 migration notes for removed
+  inputs and PATH behavior ([#9](https://github.com/tox-dev/github-workflows/pull/9)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-1-0-2"></a>
 
 ## 1.0.2 (2026-10-23)
