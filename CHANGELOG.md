@@ -2,6 +2,33 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-0-4-0"></a>
+
+## 0.4.0 (2026-10-23)
+
+<a name="release-0-4-0-added"></a>
+
+### Added
+
+- Refresh a secondary pylock for project runtime dependencies, including a separate Python and platform matrix
+  ([#4](https://github.com/tox-dev/github-workflows/pull/4)) by [@gaborbernat](https://github.com/gaborbernat).
+
+<a name="release-0-4-0-fixed"></a>
+
+### Fixed
+
+- Allow repeated lock-tool setup on Windows and check caller release-creator versions against the selected groups
+  ([#4](https://github.com/tox-dev/github-workflows/pull/4)) by [@gaborbernat](https://github.com/gaborbernat).
+- Remove partial GitHub Release assets before retrying an upload in the same run
+  ([#4](https://github.com/tox-dev/github-workflows/pull/4)) by [@gaborbernat](https://github.com/gaborbernat).
+
+<a name="release-0-4-0-security"></a>
+
+### Security
+
+- Enforce the seven-day Nab cutoff for global and package rules, including disabled or shortened cutoffs
+  ([#4](https://github.com/tox-dev/github-workflows/pull/4)) by [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-0-3-0"></a>
 
 ## 0.3.0 (2026-10-23)
