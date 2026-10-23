@@ -172,9 +172,21 @@ runs:
           if jq -e '.[0].draft' "$RUNNER_TEMP/release-current.json" >/dev/null; then
             for asset in "$ASSETS_DIRECTORY"/*; do
               name=${asset##*/}
-              if ! jq -e --arg name "$name" 'any(.[0].assets[]; .name == $name)' \
+              if ! jq -e --arg name "$name" --slurpfile assets "$RUNNER_TEMP/release-assets.json" '
+                any(.[0].assets[]; .name == $name and .state == "uploaded" and
+                  (.digest as $digest | any($assets[0][]; .name == $name and .digest == $digest)))
+              ' \
                 "$RUNNER_TEMP/release-current.json" >/dev/null; then
                 for attempt in {1..6}; do
+                  if ((attempt > 1)); then
+                    release=$(gh api "repos/$GH_REPO/releases/$release_id")
+                    asset_ids=$(jq -r --arg name "$name" \
+                      '.assets[] | select(.name == $name and .state != "uploaded") | .id' <<<"$release")
+                    while IFS= read -r asset_id; do
+                      [[ -n "$asset_id" ]] || continue
+                      gh api -X DELETE "repos/$GH_REPO/releases/assets/$asset_id" >/dev/null
+                    done <<<"$asset_ids"
+                  fi
                   if gh release upload "$TAG" "$asset" --repo "$GH_REPO"; then
                     break
                   fi

@@ -29,6 +29,7 @@ jobs:
           version: latest-known
           python-version: "3.15"
           enable-cache: true
+          cache-suffix: ${{ github.job }}
           cache-dependency-glob: |
             pylock.toml
             pyproject.toml
@@ -58,6 +59,7 @@ jobs:
           version: latest-known
           python-version: "3.15"
           enable-cache: true
+          cache-suffix: ${{ github.job }}
           cache-dependency-glob: |
             pylock.toml
             pyproject.toml
@@ -99,6 +101,7 @@ jobs:
           version: latest-known
           python-version: "3.15"
           enable-cache: true
+          cache-suffix: ${{ github.job }}
           cache-dependency-glob: |
             pylock.toml
             pyproject.toml
@@ -127,6 +130,7 @@ jobs:
           version: latest-known
           python-version: "3.15"
           enable-cache: true
+          cache-suffix: ${{ github.job }}
           cache-dependency-glob: |
             pylock.toml
             pyproject.toml
@@ -145,6 +149,7 @@ jobs:
           version: latest-known
           python-version: "3.15"
           enable-cache: true
+          cache-suffix: ${{ github.job }}
           cache-dependency-glob: |
             pylock.toml
             pyproject.toml
@@ -178,6 +183,7 @@ jobs:
           version: latest-known
           python-version: "3.15"
           enable-cache: true
+          cache-suffix: ${{ github.job }}
           cache-dependency-glob: |
             pylock.toml
             pyproject.toml
