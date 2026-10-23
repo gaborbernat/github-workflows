@@ -2,6 +2,17 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-1-0-5"></a>
+
+## 1.0.5 (2026-10-23)
+
+<a name="release-1-0-5-fixed"></a>
+
+### Fixed
+
+- Expose the locally built release-creator command before it prepares its own changelog
+  ([#11](https://github.com/tox-dev/github-workflows/pull/11)) by [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-1-0-4"></a>
 
 ## 1.0.4 (2026-10-23)
