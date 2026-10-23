@@ -2,6 +2,17 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-0-4-1"></a>
+
+## 0.4.1 (2026-10-23)
+
+<a name="release-0-4-1-fixed"></a>
+
+### Fixed
+
+- Install locked release tools on macOS Intel and Windows ARM runners
+  ([#5](https://github.com/tox-dev/github-workflows/pull/5)) by [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-0-4-0"></a>
 
 ## 0.4.0 (2026-10-23)
