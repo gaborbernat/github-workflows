@@ -2,6 +2,17 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-1-0-1"></a>
+
+## 1.0.1 (2026-10-23)
+
+<a name="release-1-0-1-fixed"></a>
+
+### Fixed
+
+- Allow release jobs to use release-creator 0.6.5 under its reviewed upload cutoff
+  ([#7](https://github.com/tox-dev/github-workflows/pull/7)) by [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-1-0-0"></a>
 
 ## 1.0.0 (2026-10-23)
