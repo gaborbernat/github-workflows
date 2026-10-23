@@ -1,0 +1,63 @@
+name: Verify PyPI artifacts
+description: Compare every built file with PyPI and verify its trusted-publisher attestation
+inputs:
+  project:
+    description: PyPI project name
+    required: true
+  version:
+    description: PyPI release version
+    required: true
+  dist:
+    description: Directory containing the complete expected distribution set
+    required: true
+  local-tool-source:
+    description: Install release-creator from the tagged checkout
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: Check artifact inputs
+      shell: bash
+      env:
+        PROJECT: ${{ inputs.project }}
+        VERSION: ${{ inputs.version }}
+        DIST: ${{ inputs.dist }}
+      run: |
+        [[ -n "$PROJECT" && -n "$VERSION" && -d "$DIST" ]] || exit 1
+    - name: Install locked release tool
+      uses: $/install-locked-tools
+      with:
+        groups: release-notes${{ inputs.local-tool-source == 'true' && ' project-runtime' || '' }}
+        venv: ${{ runner.temp }}/pypi-reconcile
+        local-tool-source: ${{ inputs.local-tool-source }}
+    - name: Install tagged release tool
+      if: inputs.local-tool-source == 'true'
+      shell: bash
+      env:
+        DIST: ${{ inputs.dist }}
+      run: uv pip install --python "$RUNNER_TEMP/pypi-reconcile" --no-deps "$DIST"/release_creator-*.whl
+    - name: Compare published files
+      shell: bash
+      env:
+        PROJECT: ${{ inputs.project }}
+        VERSION: ${{ inputs.version }}
+        DIST: ${{ inputs.dist }}
+      run: |
+        uv run --no-project --python "$RUNNER_TEMP/pypi-reconcile" release-creator artifacts --project "$PROJECT" \
+          --version "$VERSION" --dist "$DIST" --wait-seconds 120 >"$RUNNER_TEMP/pypi-file-urls"
+    - name: Install locked provenance verifier
+      uses: $/install-locked-tools
+      with:
+        groups: release-attestations
+        venv: ${{ runner.temp }}/pypi-attestations
+        lock-source: shared
+    - name: Verify trusted-publisher attestations
+      shell: bash
+      env:
+        REPOSITORY: ${{ github.repository }}
+      run: |
+        set -euo pipefail
+        while IFS= read -r url; do
+          uv run --no-project --python "$RUNNER_TEMP/pypi-attestations" pypi-attestations verify pypi \
+            --repository "https://github.com/$REPOSITORY" "$url"
+        done <"$RUNNER_TEMP/pypi-file-urls"

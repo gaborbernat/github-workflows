@@ -3,71 +3,135 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled]
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: check-${{ github.ref }}-${{ github.run_attempt > 1 && github.run_id || 'current' }}
+  cancel-in-progress: ${{ github.run_attempt == 1 }}
 jobs:
   check:
     runs-on: ubuntu-26.04
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           persist-credentials: false
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/prek
+          key: prek-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.pre-commit-config.yaml') }}
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
+          version: latest-known
           python-version: "3.15"
-          enable-cache: false
-      - name: Install locked tools
-        run: |
-          uv venv --python 3.15 .venv
-          uv pip sync --preview-features pylock --python .venv/bin/python pylock.toml
-          echo "$PWD/.venv/bin" >>"$GITHUB_PATH"
+          enable-cache: true
+          cache-dependency-glob: |
+            pylock.toml
+            pyproject.toml
+      - uses: $/install-locked-tools
+        with:
+          groups: release-check
+          venv: .release-tools
+      - name: Add locked tools to PATH
+        run: echo "$PWD/.release-tools/bin" >>"$GITHUB_PATH"
       - name: Check repository formatting
         run: prek run --all-files
-      - name: Check Python tests
-        run: |
-          ruff format --check .
-          ruff check . --output-format=concise
-          ty check tests
-      - name: Measure Action shell coverage
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y kcov
-          KCOV_BIN=kcov KCOV_OUTPUT="$RUNNER_TEMP/shell-coverage" pytest -q
-          kcov --merge "$RUNNER_TEMP/shell-coverage-merged" "$RUNNER_TEMP/shell-coverage"/*
-          python - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          import yaml
-
-          report = next(Path(os.environ["RUNNER_TEMP"], "shell-coverage-merged").rglob("codecov.json"))
-          coverage = json.loads(report.read_text())["coverage"]
-          expected = {
-              f"{path.parent.name}-{index}.sh"
-              for path in Path().glob("*/action.yml")
-              for index, _ in enumerate(yaml.safe_load(path.read_text())["runs"]["steps"])
-          }
-          if set(coverage) != expected or any(not lines or not all(lines.values()) for lines in coverage.values()):
-              raise SystemExit(f"Action shell coverage is below 100%: {coverage}")
-          PY
+  shell:
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/prek
+          key: prek-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.pre-commit-config.yaml') }}
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: latest-known
+          python-version: "3.15"
+          enable-cache: true
+          cache-dependency-glob: |
+            pylock.toml
+            pyproject.toml
+      - uses: $/install-locked-tools
+        with:
+          groups: release-shell
+          venv: .release-tools
+      - name: Add locked tools to PATH
+        run: echo "$PWD/.release-tools/bin" >>"$GITHUB_PATH"
       - name: Check inline shell
         run: |
           set -euo pipefail
+          script_dir=./inline-shell-check
+          mkdir "$script_dir"
+          trap 'rm -rf "$script_dir"' EXIT
           for file in .github/workflows/*.yaml */action.yml; do
             yq -rj '[.. | objects | select(has("run")) | .run] | .[] | . + "\u0000"' "$file" \
               >"$RUNNER_TEMP/run-blocks"
             index=0
             while IFS= read -r -d '' script; do
-              echo "$file: run block $index"
-              printf '#!/usr/bin/env bash\n%s\n' "${script%$'\n'}" >"$RUNNER_TEMP/inline-shell.sh"
-              prek run shellcheck --files "$RUNNER_TEMP/inline-shell.sh"
-              prek run shfmt --files "$RUNNER_TEMP/inline-shell.sh"
+              script_file="$script_dir/run-${file//\//-}-$index.sh"
+              printf '#!/usr/bin/env bash\n%s\n' "${script%$'\n'}" >"$script_file"
               index=$((index + 1))
             done <"$RUNNER_TEMP/run-blocks"
           done
+          prek run shellcheck --files "$script_dir"/*.sh
+          prek run shfmt --files "$script_dir"/*.sh
+  test:
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: latest-known
+          python-version: "3.15"
+          enable-cache: true
+          cache-dependency-glob: |
+            pylock.toml
+            pyproject.toml
+      - uses: $/install-locked-tools
+        with:
+          groups: release-news release-shell
+          venv: .release-tools
+      - name: Add locked tools to PATH
+        run: echo "$PWD/.release-tools/bin" >>"$GITHUB_PATH"
+      - name: Install current test tools
+        run: |
+          uv venv --python 3.15 .venv
+          uv pip install --python .venv/bin/python --group test
+      - name: Run Action tests
+        run: .venv/bin/pytest -q -n auto
+  type:
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: latest-known
+          python-version: "3.15"
+          enable-cache: true
+          cache-dependency-glob: |
+            pylock.toml
+            pyproject.toml
+      - name: Check Python types
+        run: uvx --with tox-uv tox run -e type
   changelog:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-26.04
@@ -78,161 +142,65 @@ jobs:
           persist-credentials: false
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
+          version: latest-known
           python-version: "3.15"
-          enable-cache: false
-      - name: Require release notes
-        env:
-          SKIP_NEWS: ${{ contains(github.event.pull_request.labels.*.name, 'skip news') }}
-          BOT_AUTHOR: ${{ github.event.pull_request.user.type == 'Bot' }}
-        run: |
-          set -euo pipefail
-          if git diff --name-only "origin/${GITHUB_BASE_REF}...HEAD" -- 'changelog.d/*.md' | grep -q .; then
-            uv run --no-default-groups --group release towncrier check --compare-with "origin/${GITHUB_BASE_REF}"
-          elif [[ "$SKIP_NEWS" != true && "$BOT_AUTHOR" != true ]]; then
-            echo '::error::add a changelog fragment or apply the skip news label'
-            exit 1
-          fi
-  release-dry-run:
+          enable-cache: true
+          cache-dependency-glob: |
+            pylock.toml
+            pyproject.toml
+      - uses: $/install-locked-tools
+        with:
+          groups: release-news
+          venv: ${{ runner.temp }}/release-tools
+      - name: Add locked tools to PATH
+        run: echo "$RUNNER_TEMP/release-tools/bin" >>"$GITHUB_PATH"
+      - uses: $/validate-news
+  hook-cooldown:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-26.04
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: $/check-hook-update-cooldown
+  release-tools-preview:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-26.04
     permissions:
       contents: read
-      pull-requests: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
           persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha }}
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
+          version: latest-known
           python-version: "3.15"
-          enable-cache: false
-      - name: Install locked release tools
-        run: |
-          uv venv --python 3.15 .venv
-          uv pip sync --preview-features pylock --python .venv/bin/python pylock.toml
-          echo "$PWD/.venv/bin" >>"$GITHUB_PATH"
-      - name: Rehearse a squash merge
-        id: fixture
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          set -euo pipefail
-          git checkout -B release-validation "$BASE_SHA"
-          git merge --squash "$HEAD_SHA"
-          printf 'Validate the release pipeline on this pull request.\n' \
-            >"changelog.d/+validation-${PR_NUMBER}.bugfix.md"
-          git add -A
-          git -c user.name=release-validation \
-            -c user.email=release-validation@users.noreply.github.com \
-            commit -m "Validate release pipeline (#${PR_NUMBER})"
-          git init --bare "$RUNNER_TEMP/release-origin.git"
-          git remote set-url origin "$RUNNER_TEMP/release-origin.git"
-          git push origin HEAD:main
-          echo "sha=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
-      - name: Dirty the release checkout
-        run: touch untracked-release-file
-      - id: dirty_prepare
-        name: Reject a dirty release checkout
-        uses: $/prepare-towncrier
-        continue-on-error: true
+          enable-cache: true
+          cache-dependency-glob: |
+            pylock.toml
+            pyproject.toml
+      - uses: $/refresh-release-lock
         with:
-          changelog: CHANGELOG.md
-          format: markdown
-          patch: ${{ runner.temp }}/release.patch
-      - name: Check dirty checkout rejection
-        env:
-          OUTCOME: ${{ steps.dirty_prepare.outcome }}
-        run: |
-          test "$OUTCOME" = failure
-          rm untracked-release-file
-      - id: prepare
-        uses: $/prepare-towncrier
-        with:
-          changelog: CHANGELOG.md
-          format: markdown
-          patch: ${{ runner.temp }}/release.patch
-      - name: Restore the source commit
-        run: git reset --hard HEAD
-      - id: stale_validate
-        name: Reject a stale release branch
-        uses: $/validate-release-patch
-        continue-on-error: true
-        with:
-          version: ${{ steps.prepare.outputs.version }}
-          patch: ${{ runner.temp }}/release.patch
-          changelog: CHANGELOG.md
-          fragments: changelog.d
-          expected-sha: "0000000000000000000000000000000000000000"
-      - name: Check stale branch rejection
-        env:
-          OUTCOME: ${{ steps.stale_validate.outcome }}
-        run: test "$OUTCOME" = failure
-      - uses: $/validate-release-patch
-        with:
-          version: ${{ steps.prepare.outputs.version }}
-          patch: ${{ runner.temp }}/release.patch
-          changelog: CHANGELOG.md
-          fragments: changelog.d
-          expected-sha: ${{ steps.fixture.outputs.sha }}
-      - id: invalid_tag
-        name: Reject an invalid release tag
-        uses: $/commit-and-tag
-        continue-on-error: true
-        with:
-          version: bad tag
-          token: ${{ github.token }}
-          app-slug: github-actions
-          message: invalid release
-      - name: Check invalid tag rejection
-        env:
-          OUTCOME: ${{ steps.invalid_tag.outcome }}
-        run: test "$OUTCOME" = failure
-      - uses: $/commit-and-tag
-        with:
-          version: ${{ steps.prepare.outputs.version }}
-          token: ${{ github.token }}
-          app-slug: github-actions
-          message: release ${{ steps.prepare.outputs.version }}
-      - name: Render tagged notes
-        env:
-          VERSION: ${{ steps.prepare.outputs.version }}
-        run: |
-          set -euo pipefail
-          test -n "$(git ls-remote origin "refs/tags/$VERSION")"
-          previous=$(git tag --list | release-creator tags "$VERSION" --previous)
-          args=()
-          if [[ -n "$previous" ]]; then
-            args+=(--previous "$previous")
-          fi
-          release-creator notes --changelog CHANGELOG.md --tag "$VERSION" \
-            --repository "$GITHUB_REPOSITORY" "${args[@]}" \
-            >"$RUNNER_TEMP/release-notes.md"
-          test -s "$RUNNER_TEMP/release-notes.md"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: release-dry-run
-          path: |
-            ${{ runner.temp }}/release.patch
-            ${{ runner.temp }}/release-notes.md
-          if-no-files-found: error
+          lock-groups: >-
+            build lock-tools release-notes release-news release-prepare release-validate release-check release-attestations release-shell release-hooks release-hook-check
+          mode: check
   gate:
-    name: Required checks pass
-    if: always()
-    needs: [check, changelog, release-dry-run]
+    name: ${{ github.event_name == 'pull_request' && 'Required checks pass' || 'Required checks pass (non-PR)' }}
+    if: ${{ !cancelled() }}
+    needs: [check, shell, test, type, changelog, hook-cooldown, release-tools-preview]
     runs-on: ubuntu-26.04
     steps:
       - env:
           NEEDS_JSON: ${{ toJSON(needs) }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           jq -e '
             all(
               to_entries[];
               .value.result == "success" or
-              (.key == "changelog" and .value.result == "skipped") or
-              (.key == "release-dry-run" and .value.result == "skipped")
+              ($ENV.EVENT_NAME != "pull_request" and .value.result == "skipped" and
+                (.key == "changelog" or .key == "hook-cooldown" or .key == "release-tools-preview"))
             )
           ' <<<"$NEEDS_JSON"

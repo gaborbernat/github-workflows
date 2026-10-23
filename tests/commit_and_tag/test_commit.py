@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-lazy from pathlib import Path
+from pathlib import Path
 
 import pytest
 from conftest import action, run
@@ -11,13 +11,9 @@ from conftest import action, run
     "annotated",
     [pytest.param("false", id="lightweight"), pytest.param("true", id="annotated")],
 )
-@pytest.mark.parametrize("branch", [pytest.param("main", id="main"), pytest.param("release", id="release-branch")])
 def test_commit_and_tag_pushes_atomically(
-    repository: Path, tmp_path: Path, action_scripts: Path, annotated: str, branch: str
+    repository: Path, tmp_path: Path, action_scripts: Path, annotated: str
 ) -> None:
-    if branch != "main":
-        run(repository, "git", "checkout", "-b", branch)
-        run(repository, "git", "push", "origin", f"HEAD:{branch}")
     assert action(repository, tmp_path, action_scripts, "prepare-towncrier", version="0.2.0").returncode == 0
     run(repository, "git", "reset", "--hard", "HEAD")
     assert (
@@ -27,7 +23,6 @@ def test_commit_and_tag_pushes_atomically(
             action_scripts,
             "validate-release-patch",
             version="0.2.0",
-            BRANCH=branch,
         ).returncode
         == 0
     )
@@ -41,15 +36,14 @@ def test_commit_and_tag_pushes_atomically(
         "commit-and-tag",
         version="0.2.0",
         APP_SLUG="release-test",
-        GH_TOKEN="test-token",  # ruff: ignore[hardcoded-password-func-arg]  # Local Git fixture never sends this token.
+        TOKEN="test-token",  # ruff: ignore[hardcoded-password-func-arg]  # Local Git fixture never sends this token.
         MESSAGE="release 0.2.0",
         ANNOTATED=annotated,
-        BRANCH=branch,
         PATH=f"{tmp_path}:{os.environ['PATH']}",
     )
     assert result.returncode == 0, result.stderr
     assert run(repository, "git", "ls-remote", "origin", "refs/tags/0.2.0").stdout.strip()
-    assert run(repository, "git", "ls-remote", "origin", f"refs/heads/{branch}").stdout.strip()
+    assert run(repository, "git", "ls-remote", "origin", "refs/heads/main").stdout.strip()
     assert run(repository, "git", "cat-file", "-t", "refs/tags/0.2.0").stdout.strip() == (
         "tag" if annotated == "true" else "commit"
     )
@@ -127,10 +121,33 @@ def test_commit_and_tag_keeps_remote_unchanged_on_rejection(
         "commit-and-tag",
         version="0.2.0",
         APP_SLUG="release-test",
-        GH_TOKEN="test-token",
+        TOKEN="test-token",
         MESSAGE="release 0.2.0",
         PATH=f"{tmp_path}:{os.environ['PATH']}",
     )
     assert result.returncode != 0
+    assert run(repository, "git", "ls-remote", "origin", "refs/heads/main").stdout == before
+    assert not run(repository, "git", "ls-remote", "origin", "refs/tags/0.2.0").stdout
+
+
+def test_commit_and_tag_rejects_missing_token_without_remote_change(
+    repository: Path, tmp_path: Path, action_scripts: Path
+) -> None:
+    assert action(repository, tmp_path, action_scripts, "prepare-towncrier", version="0.2.0").returncode == 0
+    run(repository, "git", "reset", "--hard", "HEAD")
+    assert action(repository, tmp_path, action_scripts, "validate-release-patch", version="0.2.0").returncode == 0
+    before = run(repository, "git", "ls-remote", "origin", "refs/heads/main").stdout
+    result = action(
+        repository,
+        tmp_path,
+        action_scripts,
+        "commit-and-tag",
+        version="0.2.0",
+        APP_SLUG="release-test",
+        TOKEN="",
+        GH_TOKEN="ambient-test-token",  # ruff: ignore[hardcoded-password-func-arg]  # No token reaches GitHub.
+    )
+    assert result.returncode != 0
+    assert "repository App token and slug are required" in result.stderr
     assert run(repository, "git", "ls-remote", "origin", "refs/heads/main").stdout == before
     assert not run(repository, "git", "ls-remote", "origin", "refs/tags/0.2.0").stdout

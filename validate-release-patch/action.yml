@@ -1,5 +1,5 @@
 name: Validate release patch
-description: Apply the prepared patch to the original main commit and rerun prek
+description: Check and apply a prepared release patch, with optional release-tool validation
 inputs:
   version:
     description: Release version
@@ -7,81 +7,176 @@ inputs:
   patch:
     description: Path to the downloaded patch
     required: true
-  changelog:
-    description: Changelog path
-    required: true
-  fragments:
-    description: Fragment directory
-    required: true
-  heading-prefix:
-    description: Literal prefix of the version heading
-    default: "## "
-  branch:
-    description: Protected release branch
-    default: main
-  remote:
-    description: Git remote containing the release branch
-    default: origin
-  expected-sha:
-    description: Exact branch commit used for release preparation
+  working-directory:
+    description: Checkout to validate and apply the patch in
+    default: .
+  expected-patch-sha:
+    description: SHA-256 digest from a separate keyless validation job
     default: ""
+  checks:
+    description: Run release-creator and prek after applying the patch
+    default: "true"
 runs:
   using: composite
   steps:
-    - name: Verify release source
+    - name: Require a clean release checkout
       shell: bash
-      env:
-        BRANCH: ${{ inputs.branch }}
-        REMOTE: ${{ inputs.remote }}
-        EXPECTED_SHA: ${{ inputs.expected-sha }}
+      working-directory: ${{ inputs.working-directory }}
       run: |
-        set -euo pipefail
         if [[ -n $(git status --porcelain) ]]; then
           echo '::error::release validation requires a clean checkout' >&2
           exit 1
         fi
-        git fetch "$REMOTE" "$BRANCH"
-        if [[ $(git rev-parse "$REMOTE/$BRANCH") != "${EXPECTED_SHA:-$GITHUB_SHA}" ]]; then
-          echo "::error::$BRANCH changed during release preparation; dispatch again" >&2
-          exit 1
-        fi
-    - name: Apply and inspect release patch
+    - name: Verify release source
       shell: bash
-      env:
-        VERSION: ${{ inputs.version }}
-        PATCH: ${{ inputs.patch }}
-        CHANGELOG: ${{ inputs.changelog }}
-        FRAGMENTS: ${{ inputs.fragments }}
-        HEADING_PREFIX: ${{ inputs.heading-prefix }}
+      working-directory: ${{ inputs.working-directory }}
       run: |
         set -euo pipefail
+        git fetch origin main
+        if [[ $(git rev-parse origin/main) != "$GITHUB_SHA" ]]; then
+          echo '::error::main changed during release preparation; dispatch again' >&2
+          exit 1
+        fi
+    - name: Apply release patch
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PATCH: ${{ inputs.patch }}
+        EXPECTED_PATCH_SHA: ${{ inputs.expected-patch-sha }}
+        CHECKS: ${{ inputs.checks }}
+      run: |
+        set -euo pipefail
+        if [[ "$CHECKS" != true && "$CHECKS" != false ]]; then
+          echo '::error::checks must be true or false' >&2
+          exit 1
+        fi
+        if [[ "$CHECKS" == false && -z "$EXPECTED_PATCH_SHA" ]]; then
+          echo '::error::skipping release checks requires a validated patch digest' >&2
+          exit 1
+        fi
+        read -r patch_sha _ < <(sha256sum "$PATCH")
+        if [[ -n "$EXPECTED_PATCH_SHA" && "$patch_sha" != "$EXPECTED_PATCH_SHA" ]]; then
+          echo '::error::release patch differs from the validated artifact' >&2
+          exit 1
+        fi
         git apply --check "$PATCH"
         git apply --index "$PATCH"
         if git diff --cached --quiet; then
           echo '::error::release patch contains no changes' >&2
           exit 1
         fi
-        mapfile -d '' -t paths < <(git diff --cached --name-only -z)
-        for path in "${paths[@]}"; do
-          if [[ "$path" != "$CHANGELOG" && "$path" != "$FRAGMENTS/"* ]]; then
+    - id: config
+      uses: $/read-towncrier-config
+      with:
+        working-directory: ${{ inputs.working-directory }}
+    - name: Check release patch paths
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        CHANGELOG: ${{ steps.config.outputs.changelog }}
+        FRAGMENTS: ${{ steps.config.outputs.fragments }}
+      run: |
+        set -euo pipefail
+        git diff --cached --name-status --no-renames -z >"$RUNNER_TEMP/release-paths"
+        while IFS= read -r -d '' status && IFS= read -r -d '' path; do
+          if [[ "$path" == "$CHANGELOG" ]]; then
+            continue
+          fi
+          if [[ "$path" != "$FRAGMENTS/"* ]]; then
             echo "::error::unexpected release path: $path" >&2
             exit 1
           fi
-        done
-
-        heading_found=false
-        mapfile -t changelog_lines <"$CHANGELOG"
-        for line in "${changelog_lines[@]}"; do
-          if [[ "$line" == "$HEADING_PREFIX$VERSION ("* ]]; then
-            heading_found=true
+          if [[ "$status" != D ]]; then
+            echo "::error::unexpected release path status: $status $path" >&2
+            exit 1
           fi
-        done
-        if [[ "$heading_found" != true ]]; then
-          echo "::error::$CHANGELOG has no section for $VERSION" >&2
+        done <"$RUNNER_TEMP/release-paths"
+
+        if git diff --cached --quiet -- "$CHANGELOG"; then
+          echo "::error::release patch does not change $CHANGELOG" >&2
+          exit 1
+        fi
+    - name: Check consumed fragments
+      if: inputs.checks == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: release-creator validate-fragment-deletions
+    - name: Check release patch file modes
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        FRAGMENTS: ${{ steps.config.outputs.fragments }}
+      run: |
+        set -euo pipefail
+        git diff --cached --raw --no-renames -z >"$RUNNER_TEMP/release-modes"
+        while IFS= read -r -d '' metadata && IFS= read -r -d '' path; do
+          read -ra fields <<<"$metadata"
+          case "${fields[4]}" in
+          A)
+            old_mode=000000
+            new_mode=100644
+            ;;
+          M)
+            old_mode=100644
+            new_mode=100644
+            ;;
+          D)
+            old_mode=100644
+            new_mode=000000
+            if [[ "$path" != "$FRAGMENTS/"* ]]; then
+              echo "::error::unexpected release file mode in $path: ${fields[1]}" >&2
+              exit 1
+            fi
+            ;;
+          *)
+            echo "::error::unexpected release file mode in $path: ${fields[1]}" >&2
+            exit 1
+            ;;
+          esac
+          if [[ "${fields[0]#\:}" != "$old_mode" ]]; then
+            echo "::error::unexpected previous release file mode in $path: ${fields[0]#\:}" >&2
+            exit 1
+          fi
+          if [[ "${fields[1]}" != "$new_mode" ]]; then
+            echo "::error::unexpected release file mode in $path: ${fields[1]}" >&2
+            exit 1
+          fi
+        done <"$RUNNER_TEMP/release-modes"
+    - name: Check RST conflict markers
+      if: steps.config.outputs.format == 'rst'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        CHANGELOG: ${{ steps.config.outputs.changelog }}
+      run: |
+        set -euo pipefail
+        git diff --cached --unified=0 -- "$CHANGELOG" >"$RUNNER_TEMP/release-rst-diff"
+        while IFS= read -r line; do
+          case "$line" in
+          +'<<<<<<<'* | +'|||||||'* | +'>>>>>>>'*)
+            echo '::error::release changelog contains conflict markers' >&2
+            exit 1
+            ;;
+          esac
+        done <"$RUNNER_TEMP/release-rst-diff"
+        printf '%s conflict-marker-size=10\n' "$CHANGELOG" >>"$(git rev-parse --git-path info/attributes)"
+    - name: Check rendered release section
+      if: inputs.checks == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        VERSION: ${{ inputs.version }}
+        CHANGELOG: ${{ steps.config.outputs.changelog }}
+      run: |
+        if ! release-creator notes --changelog "$CHANGELOG" --tag "$VERSION" --repository "$GITHUB_REPOSITORY" \
+          >/dev/null; then
+          echo "::error::$CHANGELOG has no valid section for $VERSION" >&2
           exit 1
         fi
     - name: Run prek on release patch
+      if: inputs.checks == 'true'
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
       run: |
         set -euo pipefail
         git diff --cached --check

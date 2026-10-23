@@ -1,0 +1,171 @@
+name: Refresh a release-tool lock
+description: Refresh or check the Nab lock for selected release groups
+inputs:
+  lock-groups:
+    description: Space-separated dependency groups recorded in pylock.toml
+    required: true
+  additional-lock:
+    description: Optional secondary pylock basename for a separate build matrix
+    default: ""
+  additional-lock-groups:
+    description: Groups for the secondary lock; empty selects build requirements
+    default: ""
+  additional-matrix-python:
+    description: Python range for the secondary lock
+    default: ""
+  additional-matrix-platforms:
+    description: Space-separated Nab platform IDs for the secondary lock
+    default: ""
+  additional-matrix-implementations:
+    description: Space-separated Python implementations for the secondary lock
+    default: ""
+  mode:
+    description: Refresh the lock or check that the committed lock is current
+    default: refresh
+outputs:
+  changed:
+    description: Whether the lock or expired package cutoffs differ from the checkout
+    value: ${{ steps.lock.outputs.changed }}
+runs:
+  using: composite
+  steps:
+    - uses: $/install-nab
+    - name: Check recent package cutoffs
+      shell: bash
+      run: uv run --no-project --python "$RUNNER_TEMP/lock-tools" python "$GITHUB_ACTION_PATH/../tools/check_recent_cutoffs.py" pyproject.toml
+    - name: Expire reviewed package cutoffs
+      if: inputs.mode == 'refresh'
+      shell: bash
+      run: |
+        set -euo pipefail
+        uv run --no-project --python "$RUNNER_TEMP/lock-tools" python \
+          "$GITHUB_ACTION_PATH/../tools/expire_cutoffs.py" pyproject.toml
+        cp pyproject.toml "$RUNNER_TEMP/project-after-expiry.toml"
+    - name: Resolve release groups
+      shell: bash
+      env:
+        LOCK_GROUPS: ${{ inputs.lock-groups }}
+        MODE: ${{ inputs.mode }}
+        ADDITIONAL_LOCK: ${{ inputs.additional-lock }}
+        ADDITIONAL_GROUPS: ${{ inputs.additional-lock-groups }}
+        MATRIX_PYTHON: ${{ inputs.additional-matrix-python }}
+        MATRIX_PLATFORMS: ${{ inputs.additional-matrix-platforms }}
+        MATRIX_IMPLEMENTATIONS: ${{ inputs.additional-matrix-implementations }}
+      run: |
+        set -euo pipefail
+        groups=()
+        while IFS= read -r line; do
+          read -ra selected <<<"$line"
+          groups+=("${selected[@]}")
+        done <<<"$LOCK_GROUPS"
+        if ((${#groups[@]} == 0)); then
+          echo '::error::at least one lock group is required' >&2
+          exit 1
+        fi
+        case "$MODE" in
+        check)
+          refresh=()
+          cp pylock.toml "$RUNNER_TEMP/pylock-before-check.toml"
+          ;;
+        refresh) refresh=(--upgrade) ;;
+        *)
+          echo "::error::invalid lock mode: $MODE" >&2
+          exit 1
+          ;;
+        esac
+        uv run --no-project --python "$RUNNER_TEMP/lock-tools" nab lock --groups "${groups[@]}" \
+          --output pylock.toml "${refresh[@]}"
+        if [[ "$MODE" == check ]]; then
+          python3 "$GITHUB_ACTION_PATH/../tools/check_nab_lock.py" \
+            "$RUNNER_TEMP/pylock-before-check.toml" pylock.toml
+        fi
+        if [[ -z "$ADDITIONAL_LOCK" ]]; then
+          if [[ -n "$ADDITIONAL_GROUPS$MATRIX_PYTHON$MATRIX_PLATFORMS$MATRIX_IMPLEMENTATIONS" ]]; then
+            echo '::error::secondary matrix inputs require additional-lock' >&2
+            exit 1
+          fi
+          exit 0
+        fi
+        if [[ "$ADDITIONAL_LOCK" != pylock.*.toml || "$ADDITIONAL_LOCK" == */* ||
+          ! -f "$ADDITIONAL_LOCK" || -z "$MATRIX_PYTHON" ||
+          -z "$MATRIX_PLATFORMS" || -z "$MATRIX_IMPLEMENTATIONS" ]]; then
+          echo '::error::additional-lock needs an existing pylock.*.toml and a complete matrix' >&2
+          exit 1
+        fi
+        platforms=()
+        implementations=()
+        selected_groups=()
+        while IFS= read -r line; do
+          read -ra words <<<"$line"
+          platforms+=("${words[@]}")
+        done <<<"$MATRIX_PLATFORMS"
+        while IFS= read -r line; do
+          read -ra words <<<"$line"
+          implementations+=("${words[@]}")
+        done <<<"$MATRIX_IMPLEMENTATIONS"
+        while IFS= read -r line; do
+          read -ra words <<<"$line"
+          selected_groups+=("${words[@]}")
+        done <<<"$ADDITIONAL_GROUPS"
+        if ((${#platforms[@]} == 0 || ${#implementations[@]} == 0)); then
+          echo '::error::secondary matrix needs platforms and implementations' >&2
+          exit 1
+        fi
+        selection=(--build-requirements)
+        if ((${#selected_groups[@]})); then selection=(--groups "${selected_groups[@]}"); fi
+        cp "$ADDITIONAL_LOCK" "$RUNNER_TEMP/additional-lock-before.toml"
+        uv run --no-project --python "$RUNNER_TEMP/lock-tools" nab lock pyproject.toml "${selection[@]}" \
+          --project-matrix-python "$MATRIX_PYTHON" \
+          --project-matrix-platforms "${platforms[@]}" \
+          --project-matrix-implementations "${implementations[@]}" \
+          --output "$ADDITIONAL_LOCK" "${refresh[@]}"
+        python3 "$GITHUB_ACTION_PATH/../tools/check_nab_lock.py" --environments-only \
+          "$RUNNER_TEMP/additional-lock-before.toml" "$ADDITIONAL_LOCK"
+        if [[ "$MODE" == check ]]; then
+          python3 "$GITHUB_ACTION_PATH/../tools/check_nab_lock.py" \
+            "$RUNNER_TEMP/additional-lock-before.toml" "$ADDITIONAL_LOCK"
+        fi
+    - name: Install refreshed release checks
+      if: inputs.mode == 'refresh'
+      uses: $/install-locked-tools
+      with:
+        groups: release-check
+        venv: ${{ runner.temp }}/release-tools
+    - name: Run repository checks
+      if: inputs.mode == 'refresh'
+      shell: bash
+      run: uv run --no-project --python "$RUNNER_TEMP/release-tools" prek run --all-files
+    - name: Check refreshed paths
+      if: inputs.mode == 'refresh'
+      shell: bash
+      env:
+        ADDITIONAL_LOCK: ${{ inputs.additional-lock }}
+      run: |
+        set -euo pipefail
+        cmp pyproject.toml "$RUNNER_TEMP/project-after-expiry.toml"
+        while IFS= read -r entry; do
+          path=${entry:3}
+          if [[ "$path" != pylock.toml && "$path" != pyproject.toml && "$path" != "${ADDITIONAL_LOCK:-}" ]]; then
+            echo "::error::prek changed file outside the lock and cutoff policy: $path" >&2
+            exit 1
+          fi
+        done < <(git status --porcelain=v1 --untracked-files=all)
+    - id: lock
+      shell: bash
+      env:
+        MODE: ${{ inputs.mode }}
+        ADDITIONAL_LOCK: ${{ inputs.additional-lock }}
+      run: |
+        set -euo pipefail
+        paths=(pylock.toml pyproject.toml)
+        if [[ -n "${ADDITIONAL_LOCK:-}" ]]; then paths+=("$ADDITIONAL_LOCK"); fi
+        if [[ "$MODE" == check ]]; then
+          git diff --exit-code -- "${paths[@]}"
+          echo 'changed=false' >>"$GITHUB_OUTPUT"
+        elif git diff --quiet -- "${paths[@]}"; then
+          echo 'changed=false' >>"$GITHUB_OUTPUT"
+        else
+          echo 'changed=true' >>"$GITHUB_OUTPUT"
+          git diff --binary -- "${paths[@]}" >"$RUNNER_TEMP/lock.patch"
+          test -s "$RUNNER_TEMP/lock.patch"
+        fi

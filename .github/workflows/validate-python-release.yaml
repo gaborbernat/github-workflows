@@ -1,0 +1,110 @@
+name: Validate Python release
+on:
+  workflow_call:
+    inputs:
+      changelog:
+        description: Tracked changelog path
+        required: true
+        type: string
+      artifact-base-url:
+        description: Ecosystem release URL without the version
+        required: true
+        type: string
+      artifact-label:
+        description: Link text for the ecosystem release
+        default: PyPI release
+        type: string
+      local-tool-source:
+        description: Install release-creator from this checkout for its own release
+        default: false
+        type: boolean
+      source:
+        description: Package source directory
+        default: .
+        type: string
+      artifact-prefix:
+        description: Prefix for distribution artifacts in a multi-package release
+        default: ""
+        type: string
+permissions:
+  contents: read
+jobs:
+  source-check:
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: latest-known
+          python-version: "3.15"
+          enable-cache: false
+      - uses: $/install-locked-tools
+        with:
+          groups: release-check
+          venv: ${{ runner.temp }}/release-tools
+      - name: Run tagged source checks
+        run: >-
+          "$RUNNER_TEMP/release-tools/bin/prek" run --all-files
+      - name: Check source remains clean
+        run: test -z "$(git status --porcelain)"
+  validate:
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Verify the exact release tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/tags/$TAG"
+          git check-ref-format "refs/tags/$TAG"
+          test "$(git rev-parse "refs/tags/$TAG^{commit}")" = "$(git rev-parse HEAD)"
+          git merge-base --is-ancestor HEAD origin/main
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: latest-known
+          python-version: "3.15"
+          enable-cache: false
+      - uses: $/install-locked-tools
+        with:
+          groups: release-notes${{ inputs.local-tool-source && ' project-runtime' || '' }}
+          venv: ${{ runner.temp }}/release-tools
+          local-tool-source: ${{ inputs.local-tool-source }}
+      - name: Add locked tools to PATH
+        run: echo "$RUNNER_TEMP/release-tools/bin" >>"$GITHUB_PATH"
+      - uses: $/build-python-distribution
+        with:
+          source: ${{ inputs.source }}
+      - name: Install the local release tool
+        if: inputs.local-tool-source
+        run: uv pip install --python "$RUNNER_TEMP/release-tools/bin/python" --no-deps dist/*.whl
+      - name: Render tagged-source notes
+        uses: $/render-release-notes
+        with:
+          tag: ${{ github.ref_name }}
+          changelog: ${{ inputs.changelog }}
+          artifact-url: ${{ inputs.artifact-base-url }}${{ github.ref_name }}/
+          artifact-label: ${{ inputs.artifact-label }}
+          output: ${{ runner.temp }}/release-notes.md
+      - uses: $/validate-python-distribution
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact-prefix }}python-package-distributions
+          path: dist/*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact-prefix }}release-validation-notes
+          path: ${{ runner.temp }}/release-notes.md
+          if-no-files-found: error
