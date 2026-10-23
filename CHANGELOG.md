@@ -2,6 +2,19 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-1-0-4"></a>
+
+## 1.0.4 (2026-10-23)
+
+<a name="release-1-0-4-fixed"></a>
+
+### Fixed
+
+- Ignore legacy PyPI files from post and development releases when verifying an earlier release
+  ([#10](https://github.com/tox-dev/github-workflows/pull/10)) by [@gaborbernat](https://github.com/gaborbernat).
+- Retry transient TLS and truncated JSON responses while verifying PyPI files
+  ([#10](https://github.com/tox-dev/github-workflows/pull/10)) by [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-1-0-3"></a>
 
 ## 1.0.3 (2026-10-23)
