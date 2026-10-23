@@ -2,6 +2,42 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-1-0-0"></a>
+
+## 1.0.0 (2026-10-23)
+
+<a name="release-1-0-0-changes"></a>
+
+### Changes
+
+- Run changelog checks in a separate workflow so label changes do not restart the test matrix
+  ([#6](https://github.com/tox-dev/github-workflows/pull/6)) by [@gaborbernat](https://github.com/gaborbernat).
+- Run release-tool checks and build-constraint export outside the job that builds distribution files
+  ([#6](https://github.com/tox-dev/github-workflows/pull/6)) by [@gaborbernat](https://github.com/gaborbernat).
+
+<a name="release-1-0-0-fixed"></a>
+
+### Fixed
+
+- Compare the complete local distribution set with PyPI, reject yanked or changed files, and verify each published
+  file's attestation ([#6](https://github.com/tox-dev/github-workflows/pull/6)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Reject future-dated locks and release dependencies that were uploaded too recently. Keep deliberate package holds
+  during weekly lock refreshes ([#6](https://github.com/tox-dev/github-workflows/pull/6)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Select the previous release tag from the same package when a repository uses package-prefixed tags
+  ([#6](https://github.com/tox-dev/github-workflows/pull/6)) by [@gaborbernat](https://github.com/gaborbernat).
+
+<a name="release-1-0-0-breaking-changes"></a>
+
+### Breaking changes
+
+- Remove the `install-nab`, `label-bot-news`, `refresh-hook-pins`, `resolve-pr-from-run`, and
+  `validate-python-distribution` Actions. `select-previous-tag` no longer accepts `package`, `executable`, or
+  `stable-only`; `validate-release-patch` no longer accepts `expected-patch-sha`; and `render-release-notes` no longer
+  emits `previous`. The release validation workflow no longer uploads the `release-validation-notes` artifact
+  ([#6](https://github.com/tox-dev/github-workflows/pull/6)) by [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-0-4-1"></a>
 
 ## 0.4.1 (2026-10-23)
