@@ -2,6 +2,17 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-3-1-0"></a>
+
+## 3.1.0 (2026-10-24)
+
+<a name="release-3-1-0-added"></a>
+
+### Added
+
+- Add a keyless Action to refresh the signed mise binary pin after its GitHub Release has aged seven days
+  ([#16](https://github.com/tox-dev/github-workflows/pull/16)) by [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-3-0-1"></a>
 
 ## 3.0.1 (2026-10-24)
