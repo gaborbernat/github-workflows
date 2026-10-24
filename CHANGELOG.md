@@ -2,6 +2,17 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-3-1-1"></a>
+
+## 3.1.1 (2026-10-24)
+
+<a name="release-3-1-1-fixed"></a>
+
+### Fixed
+
+- Require both Linux mise release archives to age seven days before refreshing the pinned binary
+  ([#17](https://github.com/tox-dev/github-workflows/pull/17)) by [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-3-1-0"></a>
 
 ## 3.1.0 (2026-10-24)
