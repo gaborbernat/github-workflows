@@ -8,10 +8,16 @@ keeps its dispatch form, publisher, GitHub environment, and required check names
 
 `install-locked-tools` creates a virtual environment and installs selected groups from the caller's `pylock.toml` by
 default. `lock-source: shared` selects this Action repository's `pylock.toml` for shared jobs such as hook maintenance
-that do not need the caller's release tools. Nab's universal lock records the selected release groups for Linux, macOS,
-and Windows. It resolves dependencies under the seven-day cutoff in `[tool.nab]`; test, type, and documentation
-dependencies resolve fresh. The Action rejects missing groups and leaves tracked files unchanged. Source builds use
-constraints generated from the lock's `build` group under the runner's temporary directory.
+that do not need the caller's release tools. The caller's full project lock records runtime dependencies, every extra,
+and every dependency group across supported Python versions and platforms. CI resolves test, type, and documentation
+dependencies fresh; release jobs install only the selected release groups. The Action rejects missing groups and leaves
+tracked files unchanged. Source builds use constraints generated from the lock's `build` group under the runner's
+temporary directory.
+
+Select the groups each job needs. The shared workflows use `release-news release-shell`,
+`release-hook-check release-notes lock-reader`, and `release-prepare project-runtime` or
+`release-validate project-runtime` for release-creator's own build. A full lock records each group and extra, but a new
+combination still needs an install check before a caller uses it.
 
 - `venv`: directory for the virtual environment when `groups` is set.
 - `groups`: whitespace-separated release dependency groups. Leave empty to export build constraints without installing
@@ -31,8 +37,8 @@ constraints generated from the lock's `build` group under the runner's temporary
 
 The `build-constraints` output names the hashed constraints file. The Action adds installed command launchers to
 `GITHUB_PATH` for later steps while leaving the runner's `python`, `pip`, and `uv` commands on their original paths. Run
-`actions/checkout` and `astral-sh/setup-uv` with Python 3.15 before it. It bootstraps Nab from the shared, hash-checked
-lock.
+`actions/checkout` and `astral-sh/setup-uv` with Python 3.15 before it. It bootstraps its lock reader from the shared,
+hash-checked lock.
 
 For a zipapp that bundles wheels from a separate runtime lock, check that lock in the same job before building it:
 
@@ -87,13 +93,14 @@ The Action expects a pull request base ref and a Markdown or reStructuredText ch
 ## Refresh release tools and hooks
 
 Call `upgrade-release-tools.yaml` from a scheduled or manual workflow. Its read-only jobs refresh the universal
-`pylock.toml` and the frozen pre-commit hooks in parallel. Nab reads the seven-day package cutoff and any reviewed
-package exceptions from `[tool.nab]`. The hook updater applies the same cooldown to hook revisions and their
-`additional_dependencies`. Each job uploads a patch. The lock patch may change `pylock.toml`, an explicitly configured
-secondary lock, and `pyproject.toml` for expired Nab cutoffs. The hook patch may change only `.pre-commit-config.yaml`.
-The writer checks each patch before applying it and verifies cutoff removals before minting the App token. It then opens
-or updates one dependency PR from `automation/update-release-tools` to `main`. A lock or hook update runs the normal PR
-checks before merge.
+`pylock.toml` and the frozen pre-commit hooks in parallel. `release-creator locks` exports runtime dependencies, all
+extras, and all dependency groups with a seven-day package cutoff. Reviewed exceptions live in
+`[tool.release-creator.locks.exclude-newer-package]`. The hook updater applies the same cooldown to hook revisions and
+their `additional_dependencies`. Each job uploads a patch. The lock patch may change `pylock.toml`, an explicitly
+configured secondary Nab lock, and `pyproject.toml` for expired reviewed cutoffs. The hook patch may change only
+`.pre-commit-config.yaml`. The writer checks each patch before applying it and verifies cutoff removals before minting
+the App token. It then opens or updates one dependency PR from `automation/update-release-tools` to `main`. A lock or
+hook update runs the normal PR checks before merge.
 
 The writer uses a repository-only release App with Contents and Pull requests write access. Install the App on this
 repository, set `RELEASE_APP_CLIENT_ID` as a repository variable, and store `RELEASE_APP_PRIVATE_KEY` in the
@@ -116,20 +123,12 @@ jobs:
       contents: read
     secrets:
       RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-    with:
-      lock-groups: >-
-        build release-notes release-news release-prepare
-        release-validate release-check release-attestations release-shell
-        release-hooks release-hook-check
 ```
 
-The required `lock-groups` input lists the caller's release dependency groups, separated by spaces or newlines. Include
-`build` and the release groups used by the caller. `lock-tools` and `lock-reader` come from this Action's lock; include
-them only when the caller also uses them. Exclude test, type, and documentation groups. The project configures targets
-in `[tool.nab]`. Tests install test, type, and documentation groups afresh so they detect upstream dependency changes.
-The Action tests fetch immutable, hash-checked release-tool artifacts from the shared lock; their separate package
-fixture resolves test-only tools afresh. The updater also refreshes a caller's secondary build-matrix lock when
-`additional-lock` and its matrix inputs are set.
+`lock-groups` remains an input for callers with an older Nab primary lock; the full project exporter ignores it and
+records every dependency group and extra. Tests install test, type, and documentation tools afresh to detect upstream
+dependency changes. The updater also refreshes a caller's secondary Nab build-matrix lock when `additional-lock` and its
+matrix inputs are set.
 
 The optional `commit-message`, `pull-request-title`, and `pull-request-body` inputs retain existing PR wording. The
 workflow does not update `uv.lock` or a checked-in constraints file. Build constraints are generated from the lock's
@@ -143,49 +142,32 @@ both locks in the same dependency PR. The writer accepts only those locks, `pypr
 Pass the same `additional-lock` and matrix inputs to `validate-news` in the PR workflow. It checks changes to either
 lock against the project, including a PR that changes only the secondary lock.
 
-`refresh-release-lock` is the read-only half of the updater. In `refresh` mode, it upgrades the selected release groups
-under Nab's configured cutoff and writes `$RUNNER_TEMP/lock.patch` if either lock or a reviewed expired Nab cutoff
-changes. In `check` mode, it regenerates without upgrading and fails if the checked-in files differ. The resulting PR's
-normal formatting job runs `prek`; the writer checks patch paths and modes. Its `changed` output is `true` only when the
-refresh produces a patch. Neither mode pushes a branch or requests a write token. Check it on a PR in a job with
-Contents read permission:
-
-```yaml
-release-tools-preview:
-  if: github.event_name == 'pull_request'
-  runs-on: ubuntu-26.04
-  permissions:
-    contents: read
-  steps:
-    - uses: actions/checkout@CHECKOUT_SHA
-      with:
-        persist-credentials: false
-    - uses: astral-sh/setup-uv@SETUP_UV_SHA
-      with:
-        version: latest-known
-        python-version: '3.15'
-    - uses: tox-dev/github-workflows/refresh-release-lock@SHA
-      with:
-        lock-groups: >-
-          build lock-tools lock-reader release-notes release-news release-prepare
-          release-validate release-check release-attestations release-shell
-          release-hooks release-hook-check
-        mode: check
-```
+`refresh-release-lock` is the read-only half of the updater. In `refresh` mode, it upgrades the full primary lock and
+writes `$RUNNER_TEMP/lock.patch` if a lock or reviewed cutoff changes. In `check` mode, it regenerates at the primary
+lock's recorded creation time and fails if the checked-in files differ. `validate-news` calls this mode when a PR
+changes release inputs, including a workspace member's `pyproject.toml` or a secondary lock. The resulting PR's normal
+formatting job runs `prek`; the writer checks patch paths and modes. Its `changed` output is `true` only when the
+refresh produces a patch. Neither mode pushes a branch or requests a write token.
 
 The weekly updater freezes eligible hook revisions with `prek update --freeze --cooldown-days 7`. It then uses
 `release-creator hooks` to pin Python hook dependencies under the same cutoff and writes a patch when
 `.pre-commit-config.yaml` changes. The generation job has read-only repository permissions; the separate publish job
 checks the patch paths and file modes before obtaining an App token.
 
-`check-hook-update-cooldown` checks proposed hook revisions on bot PRs. Put it in the caller's `pull_request` workflow
-with `actions: read`, `contents: read`, and `pull-requests: read`, then include it in the required aggregate. It reads
-its PR number and head SHA from the event, compares them with the live PR, and requires each proposed revision to have
-appeared in a GitHub PR workflow run at least `minimum-days` earlier. The default is seven days. A force push does not
-reset an unchanged revision's age or give a new revision the old one's age. Human PRs pass without installing hook
-tools. Other bot PRs may change hook revisions only. On `automation/update-release-tools`, the Action verifies the bot
-against `RELEASE_APP_CLIENT_ID` and permits exact, cooled PyPI dependency pins generated by the release App. It keeps
-the same seven-day revision observation rule, so current revisions may remain pending after the lock refresh.
+`check-hook-update-cooldown` checks every PR that changes `.pre-commit-config.yaml`. Put it in the caller's
+`pull_request` workflow with `actions: read`, `contents: read`, and `pull-requests: read`, then include it in the
+required aggregate. It reads its PR number and head SHA from the event, compares them with the live PR, and reads the
+proposed configuration from that exact head, including a fork head. It checks the complete Python hook dependency
+closure at the configured `minimum-days` cutoff and requires each changed revision to have appeared in a GitHub PR
+workflow run at least that many days earlier. The default is seven days. A force push does not reset an unchanged
+revision's age or give a new revision the old one's age. Human PRs may add hooks or change their options under the same
+revision and dependency checks. A human PR may add the first managed pins when the base configuration has none; the
+complete closure check still applies. Once the base has managed pins, only the release App may change them. Other bot
+PRs may change revisions only. On `automation/update-release-tools`, the Action verifies the bot against
+`RELEASE_APP_CLIENT_ID` and permits exact, cooled PyPI dependency pins generated by the release App. Every external hook
+revision must be a full lowercase commit SHA. A revision with new Python dependencies stays blocked until the App
+updates its managed pins. Tagged source jobs check frozen revisions and the complete Python dependency closure before
+running `prek`.
 
 ```yaml
 hook-cooldown:
@@ -204,9 +186,9 @@ hook-cooldown:
 Run the PR workflow on `opened`, `reopened`, and `synchronize`; the cooldown check must succeed on PRs and may skip on
 push. The Action has no output or write side effect. Schedule `recheck-hook-update-cooldown` daily with
 `actions: write`, `contents: read`, and `pull-requests: read`. It reruns eligible failed cooldown jobs at the current
-head. GitHub accepts reruns for 30 days. A failed rerun is retried on the next schedule while eligible. The
-[caller here](.github/workflows/recheck-hook-cooldown.yaml) shows the trigger and permissions. The Action reruns the
-`hook-cooldown` job in `check.yaml`.
+head, including human and fork PRs. GitHub accepts reruns for 30 days. A failed rerun is retried on the next schedule
+while eligible. The [caller here](.github/workflows/recheck-hook-cooldown.yaml) shows the trigger and permissions. The
+Action reruns the `hook-cooldown` job in `check.yaml`.
 
 If the job has a different name or workflow filename, pass both to the scheduled caller:
 
@@ -667,25 +649,77 @@ artifact after the Action succeeds. Keep the Marketplace token in a different no
 
 `publish-jetbrains-marketplace` uploads one signed ZIP through the
 [Marketplace upload API](https://plugins.jetbrains.com/docs/marketplace/plugin-upload.html). Run it in a fresh job
-without checkout or Gradle. Download the ZIP produced by the signing job and pass that job's SHA256 output; the Action
-checks the downloaded bytes, ZIP integrity, and member names before the token-bearing upload step.
+without checkout or Gradle. The release workflow must serialize runs for the same tag. Download the signed ZIP and
+release notes by the artifact IDs from their producing jobs. The Action checks both before using the upload token.
 
 ```yaml
-  - uses: tox-dev/github-workflows/publish-jetbrains-marketplace@SHA
-    env:
-      PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
-    with:
-      archive: dist/Fish Shell 2-0.1.11-signed.zip
-      sha256: ${{ needs.sign.outputs.sha256 }}
-      plugin-id: '29973'
-      channel: ''
+marketplace-publish:
+  needs: [sign, notes]
+  runs-on: ubuntu-26.04
+  permissions:
+    actions: read
+    deployments: read
+  environment: release
+  steps:
+    - uses: actions/download-artifact@DOWNLOAD_SHA
+      with:
+        artifact-ids: ${{ needs.sign.outputs.artifact-id }}
+        path: dist
+    - uses: actions/download-artifact@DOWNLOAD_SHA
+      with:
+        artifact-ids: ${{ needs.notes.outputs.artifact-id }}
+        path: ${{ runner.temp }}/notes
+    - name: Publish signed ZIP
+      uses: tox-dev/github-workflows/publish-jetbrains-marketplace@SHA
+      with:
+        archive: dist/Plugin-1.2.3-signed.zip
+        sha256: ${{ needs.sign.outputs.sha256 }}
+        plugin-id: '29973'
+        channel: ''
+        tag: ${{ github.ref_name }}
+        commit: ${{ github.sha }}
+        signed-artifact-id: ${{ needs.sign.outputs.artifact-id }}
+        notes-artifact-id: ${{ needs.notes.outputs.artifact-id }}
+        notes-file: ${{ runner.temp }}/notes/release-notes.md
+        github-token: ${{ github.token }}
+        publish-token: ${{ secrets.PUBLISH_TOKEN }}
 ```
 
-`archive`, `sha256`, and numeric `plugin-id` are required. `channel` is empty for Stable; use a Marketplace channel name
-for a prerelease. **Output:** None. **Remote effect:** One multipart upload to JetBrains Marketplace. The Action does
-not check whether this version was published already; use the keyless release-creator `marketplace --mode stage` check
-before the upload, and `--mode verify` afterward. A retry must compare the published ZIP's member digests before
-skipping an upload because Marketplace can repackage the outer ZIP.
+`channel` is empty for Stable; use a Marketplace channel name for a prerelease. Keep the publishing step named
+`Publish signed ZIP`. The Action recognizes that name and two older upload step names in prior runs and deployment jobs.
+Keep those names in the Action when adding another. Give the job Actions and Deployments read access and the workflow a
+concurrency group keyed by tag. Use the `release` environment on the upload job. The Action verifies the remote tag,
+then searches earlier tag runs and release deployments. For the same commit, an acceptance receipt must match the
+original artifact IDs, signed ZIP digest, and release notes bytes before the Action skips upload. Any earlier release
+deployment without a verified receipt stops for manual reconciliation, even if that run did not reach the Marketplace
+step. The same applies when the linked job is no longer available. A changed publishing step name fails before upload
+until the Action recognizes it.
+
+**Output:** A `marketplace-acceptance-<run>-<attempt>` Actions artifact after a new upload. It records the tag, commit,
+plugin, channel, signed ZIP artifact and SHA256, and notes artifact and SHA256. **Remote effect:** One multipart upload
+to JetBrains Marketplace when no earlier acceptance exists, plus a GitHub Actions receipt artifact. The Action treats an
+HTTP 2xx response as acceptance; it does not depend on undocumented response fields. Run the keyless release-creator
+`marketplace --mode stage` check before this job and `--mode verify` after the version is public.
+
+If the Action stops without a receipt, inspect the exact plugin, version, and channel in the Marketplace dashboard. If
+the update is pending review, wait until it is public and verify its member bytes against the original signed ZIP. Then
+rerun the tag workflow: the keyless stage check must skip Marketplace upload before GitHub Release publication. If
+Marketplace rejected the update, resolve the rejection and prepare a new release tag. A 404 alone does not authorize
+another upload of the same tag.
+
+If an earlier `release` deployment blocks a retry, inspect its linked run and job. Only when its logs prove the
+Marketplace upload step never started, mark that deployment inactive and delete it with the
+[GitHub deployment API](https://docs.github.com/en/rest/deployments/deployments#delete-a-deployment), then rerun the tag
+workflow:
+
+```shell
+gh api -X POST repos/OWNER/REPO/deployments/ID/statuses -f state=inactive
+gh api -X DELETE repos/OWNER/REPO/deployments/ID
+```
+
+If the run or its logs have expired, do not delete the deployment based on absence from the public Marketplace download
+API: JetBrains may still be reviewing the upload. Ask JetBrains to confirm its status or cut a new release tag and
+version.
 
 ## Test a caller
 
