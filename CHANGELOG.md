@@ -2,6 +2,26 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-3-0-1"></a>
+
+## 3.0.1 (2026-10-24)
+
+<a name="release-3-0-1-fixed"></a>
+
+### Fixed
+
+- Count a fork PR's hook revision after seven days when GitHub omits the PR link from its workflow run. The run must
+  match the fork repository, branch, commit, and workflow, and occur after the PR opened
+  ([#15](https://github.com/tox-dev/github-workflows/pull/15)) by [@gaborbernat](https://github.com/gaborbernat).
+
+<a name="release-3-0-1-security"></a>
+
+### Security
+
+- Use uv 0.13.5 or newer to avoid the compromised certificate root in earlier releases. Install the exact, hash-checked
+  resolver from the shared lock for lock checks and weekly refresh, and update setup-uv to a release that boots patched
+  uv ([#15](https://github.com/tox-dev/github-workflows/pull/15)) by [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-3-0-0"></a>
 
 ## 3.0.0 (2026-10-24)
