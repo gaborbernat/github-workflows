@@ -2,6 +2,17 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-2-0-1"></a>
+
+## 2.0.1 (2026-10-24)
+
+<a name="release-2-0-1-fixed"></a>
+
+### Fixed
+
+- Allow human fork pull requests to pass the hook update check while keeping bot updates limited to the repository
+  ([#13](https://github.com/tox-dev/github-workflows/pull/13)) by [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-2-0-0"></a>
 
 ## 2.0.0 (2026-10-24)
