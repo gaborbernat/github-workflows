@@ -2,6 +2,38 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-3-0-0"></a>
+
+## 3.0.0 (2026-10-24)
+
+<a name="release-3-0-0-added"></a>
+
+### Added
+
+- Refresh and check a selectable project lock containing runtime dependencies, every extra, and every dependency group.
+  Release jobs still install only their selected, cooled groups
+  ([#14](https://github.com/tox-dev/github-workflows/pull/14)) by [@gaborbernat](https://github.com/gaborbernat).
+
+<a name="release-3-0-0-fixed"></a>
+
+### Fixed
+
+- Check the cooldown, immutable hook revisions, and complete Python hook dependency pins on every pull request that
+  changes the hook configuration, including human and fork pull requests. Check the hook pins again before running hooks
+  from a release tag. Allow the first complete set of managed pins in a human PR while keeping later pin changes limited
+  to the release App. Run hook installs from PyPI with the seven-day cutoff, ignoring repository uv configuration
+  ([#14](https://github.com/tox-dev/github-workflows/pull/14)) by [@gaborbernat](https://github.com/gaborbernat).
+
+<a name="release-3-0-0-breaking-changes"></a>
+
+### Breaking changes
+
+- Require a release tag, source commit, signed ZIP artifact, and release notes artifact when publishing a JetBrains
+  plugin. The Action now records an acceptance receipt and blocks an ambiguous retry until a maintainer reconciles the
+  Marketplace update. Publishing now requires Deployments read access and a `release` environment so retries can detect
+  prior attempts after Actions runs or receipt artifacts expire
+  ([#14](https://github.com/tox-dev/github-workflows/pull/14)) by [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-2-0-1"></a>
 
 ## 2.0.1 (2026-10-24)
