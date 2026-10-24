@@ -2,6 +2,103 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-2-0-0"></a>
+
+## 2.0.0 (2026-10-24)
+
+<a name="release-2-0-0-added"></a>
+
+### Added
+
+- `install-locked-tools` and `export-build-constraints` can verify selected groups from a separate lock against PyPI and
+  the seven-day cutoff before its packages enter a release artifact
+  ([#12](https://github.com/tox-dev/github-workflows/pull/12)) by [@gaborbernat](https://github.com/gaborbernat).
+
+<a name="release-2-0-0-changes"></a>
+
+### Changes
+
+- Download tagged release build artifacts by the IDs produced by their upload jobs
+  ([#12](https://github.com/tox-dev/github-workflows/pull/12)) by [@gaborbernat](https://github.com/gaborbernat).
+- Lock the released release-creator 1.0.0 CLI used by the weekly hook updater and allow its reviewed artifacts during
+  the seven-day cooldown ([#12](https://github.com/tox-dev/github-workflows/pull/12)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Refresh the package index when checking or updating a lock so a cached listing cannot hide a newly published version
+  ([#12](https://github.com/tox-dev/github-workflows/pull/12)) by [@gaborbernat](https://github.com/gaborbernat).
+
+<a name="release-2-0-0-fixed"></a>
+
+### Fixed
+
+- Keep the lock reader's certificate package installed when a job switches between Nab tools and other release groups
+  ([#12](https://github.com/tox-dev/github-workflows/pull/12)) by [@gaborbernat](https://github.com/gaborbernat).
+- Report malformed PyPI Simple API listings as lock verification errors instead of Python tracebacks
+  ([#12](https://github.com/tox-dev/github-workflows/pull/12)) by [@gaborbernat](https://github.com/gaborbernat).
+- Retry a PyPI artifact listing or transient 404 that lags a new release before rejecting a matching release lock
+  ([#12](https://github.com/tox-dev/github-workflows/pull/12)) by [@gaborbernat](https://github.com/gaborbernat).
+- Retry transient PyPI metadata connection errors before rejecting a release lock
+  ([#12](https://github.com/tox-dev/github-workflows/pull/12)) by [@gaborbernat](https://github.com/gaborbernat).
+- Return the selected version from the Towncrier finalization phase and reject a finalization without one
+  ([#12](https://github.com/tox-dev/github-workflows/pull/12)) by [@gaborbernat](https://github.com/gaborbernat).
+
+<a name="release-2-0-0-breaking-changes"></a>
+
+### Breaking changes
+
+- Remove `recheck-hook-update-cooldown.minimum-days` and the unused `validate-python-release` inputs `changelog`,
+  `artifact-base-url`, `artifact-label`, and `local-tool-source`. Recheck uses a fixed seven-day minimum; release notes
+  are rendered by the caller's notes job ([#12](https://github.com/tox-dev/github-workflows/pull/12)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Remove the unused `build-python-distribution.source` input. The build Action uses the repository root
+  ([#12](https://github.com/tox-dev/github-workflows/pull/12)) by [@gaborbernat](https://github.com/gaborbernat).
+- Remove the unused `working-directory` input from the release patch and Towncrier configuration Actions. They operate
+  on the current checkout ([#12](https://github.com/tox-dev/github-workflows/pull/12)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+
+<a name="release-2-0-0-security"></a>
+
+### Security
+
+- Apply separate path allowlists to lock and hook update patches before the App writes the dependency branch
+  ([#12](https://github.com/tox-dev/github-workflows/pull/12)) by [@gaborbernat](https://github.com/gaborbernat).
+- Apply the seven-day package cutoff when release and CI jobs install prek hook environments
+  ([#12](https://github.com/tox-dev/github-workflows/pull/12)) by [@gaborbernat](https://github.com/gaborbernat).
+- Check changed release locks against project requirements in pull requests, including every declared release group
+  ([#12](https://github.com/tox-dev/github-workflows/pull/12)) by [@gaborbernat](https://github.com/gaborbernat).
+- Check packages selected from a lock without dependency groups under the same marker selection used to export build
+  constraints ([#12](https://github.com/tox-dev/github-workflows/pull/12)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Check release lock artifacts against PyPI metadata before installing release tools, including their hashes, upload
+  times, and index origin. Use a pinned CA bundle for the metadata request
+  ([#12](https://github.com/tox-dev/github-workflows/pull/12)) by [@gaborbernat](https://github.com/gaborbernat).
+- Check release lock markers for the exact dependency groups each job installs, so a condition that excludes the build
+  group cannot bypass cooling ([#12](https://github.com/tox-dev/github-workflows/pull/12)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Check secondary release locks during pull request news validation when callers pass their secondary lock and matrix
+  inputs ([#12](https://github.com/tox-dev/github-workflows/pull/12)) by [@gaborbernat](https://github.com/gaborbernat).
+- Recalculate the release version in the keyless validation job before the App-token writer accepts an assembled patch
+  ([#12](https://github.com/tox-dev/github-workflows/pull/12)) by [@gaborbernat](https://github.com/gaborbernat).
+- Reject bot hook updates that change configuration beyond revisions
+  ([#12](https://github.com/tox-dev/github-workflows/pull/12)) by [@gaborbernat](https://github.com/gaborbernat).
+- Require the generated release-tool update PR to pass the same seven-day hook revision check as other bot PRs
+  ([#12](https://github.com/tox-dev/github-workflows/pull/12)) by [@gaborbernat](https://github.com/gaborbernat).
+- Use a pinned CA bundle when comparing published PyPI files with local release artifacts
+  ([#12](https://github.com/tox-dev/github-workflows/pull/12)) by [@gaborbernat](https://github.com/gaborbernat).
+- Validate the lock when a pull request changes `nab.toml`, including callers that use `validate-news` directly
+  ([#12](https://github.com/tox-dev/github-workflows/pull/12)) by [@gaborbernat](https://github.com/gaborbernat).
+- Validate the uploaded release patch in a separate keyless job before the App-key writer pushes it
+  ([#12](https://github.com/tox-dev/github-workflows/pull/12)) by [@gaborbernat](https://github.com/gaborbernat).
+- Verify the configured release App before accepting its dependency update PR, and check changed hook pins against
+  cooled PyPI files while retaining hook revision cooldowns ([#12](https://github.com/tox-dev/github-workflows/pull/12))
+  by [@gaborbernat](https://github.com/gaborbernat).
+
+<a name="release-2-0-0-performance"></a>
+
+### Performance
+
+- Install only the lock reader during release jobs; keep Nab in lock refresh jobs
+  ([#12](https://github.com/tox-dev/github-workflows/pull/12)) by [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-1-0-5"></a>
 
 ## 1.0.5 (2026-10-23)
