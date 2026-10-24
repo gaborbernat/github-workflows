@@ -1,23 +1,11 @@
 name: Validate Python release
 on:
   workflow_call:
+    outputs:
+      distributions-artifact-id:
+        description: Upload ID for the validated wheel and sdist artifact
+        value: ${{ jobs.build.outputs.artifact-id }}
     inputs:
-      changelog:
-        description: Deprecated; notes are rendered by the caller
-        type: string
-        default: ""
-      artifact-base-url:
-        description: Deprecated; notes are rendered by the caller
-        type: string
-        default: ""
-      artifact-label:
-        description: Deprecated; notes are rendered by the caller
-        type: string
-        default: PyPI release
-      local-tool-source:
-        description: Deprecated; distribution builds do not install release-creator
-        type: boolean
-        default: false
       source:
         description: Package source directory
         default: .
@@ -48,10 +36,14 @@ jobs:
           groups: release-check
           venv: ${{ runner.temp }}/release-tools
       - name: Run tagged source checks
+        env:
+          UV_EXCLUDE_NEWER: 7 days
         run: >-
           "$RUNNER_TEMP/release-tools/bin/prek" run --all-files
   constraints:
     runs-on: ubuntu-26.04
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
     permissions:
       contents: read
     steps:
@@ -70,7 +62,8 @@ jobs:
         env:
           SOURCE: ${{ steps.constraints.outputs.build-constraints }}
         run: cp "$SOURCE" "$RUNNER_TEMP/build-constraints.txt"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ inputs.artifact-prefix }}build-constraints
           path: ${{ runner.temp }}/build-constraints.txt
@@ -78,6 +71,8 @@ jobs:
   build:
     needs: constraints
     runs-on: ubuntu-26.04
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
     permissions:
       contents: read
     steps:
@@ -102,7 +97,7 @@ jobs:
           enable-cache: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: ${{ inputs.artifact-prefix }}build-constraints
+          artifact-ids: ${{ needs.constraints.outputs.artifact-id }}
           path: ${{ runner.temp }}
       - name: Require empty distribution directory
         run: test ! -d dist || test -z "$(find dist -mindepth 1 -maxdepth 1 -print -quit)"
@@ -132,7 +127,8 @@ jobs:
             echo "::error::wheel and sdist versions must match $TAG" >&2
             exit 1
           fi
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ inputs.artifact-prefix }}python-package-distributions
           path: dist/*
@@ -154,7 +150,7 @@ jobs:
           enable-cache: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: ${{ inputs.artifact-prefix }}python-package-distributions
+          artifact-ids: ${{ needs.build.outputs.artifact-id }}
           path: dist
       - name: Install distribution validators
         run: |

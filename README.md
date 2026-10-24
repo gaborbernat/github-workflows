@@ -23,6 +23,8 @@ constraints generated from the lock's `build` group under the runner's temporary
   caller's lock then needs the selected groups but does not need a release-creator package entry.
 - `constraints-lock`: lock used to export build constraints; defaults to the selected install lock. Use a secondary lock
   when the build matrix differs from the release-tool matrix.
+- `verify-lock` and `verify-groups`: check another lock's selected packages against PyPI and the seven-day cutoff
+  without installing them. Use this before bundling packages from a separate runtime lock, such as a zipapp.
 - `target-platform` and `targets`: Nab platform ID and space-separated `full-version:implementation` pairs for build
   constraints. Pass both when exporting constraints for a specific build target; otherwise the runner selects the
   target.
@@ -31,6 +33,20 @@ The `build-constraints` output names the hashed constraints file. The Action add
 `GITHUB_PATH` for later steps while leaving the runner's `python`, `pip`, and `uv` commands on their original paths. Run
 `actions/checkout` and `astral-sh/setup-uv` with Python 3.15 before it. It bootstraps Nab from the shared, hash-checked
 lock.
+
+For a zipapp that bundles wheels from a separate runtime lock, check that lock in the same job before building it:
+
+```yaml
+  - uses: tox-dev/github-workflows/install-locked-tools@SHA
+    with:
+      groups: release-build
+      venv: ${{ runner.temp }}/release-tools
+      verify-lock: pylock.zipapp.toml
+      verify-groups: project-runtime
+```
+
+`export-build-constraints` also accepts `verify-groups`. Pass it when its secondary lock supplies build tools outside
+the `build` group, such as profile-guided optimization tools in a `pgo` group.
 
 ## Check pull request news
 
@@ -73,10 +89,11 @@ The Action expects a pull request base ref and a Markdown or reStructuredText ch
 Call `upgrade-release-tools.yaml` from a scheduled or manual workflow. Its read-only jobs refresh the universal
 `pylock.toml` and the frozen pre-commit hooks in parallel. Nab reads the seven-day package cutoff and any reviewed
 package exceptions from `[tool.nab]`. The hook updater applies the same cooldown to hook revisions and their
-`additional_dependencies`. Each job uploads a patch. The writer accepts changes to `pylock.toml`, an explicitly
-configured secondary lock, and `.pre-commit-config.yaml`, plus removal of expired Nab cutoffs in `pyproject.toml`. It
-independently checks those cutoff removals before minting the App token, then opens or updates one dependency PR from
-`automation/update-release-tools` to `main`. A lock or hook update runs the normal PR checks before merge.
+`additional_dependencies`. Each job uploads a patch. The lock patch may change `pylock.toml`, an explicitly configured
+secondary lock, and `pyproject.toml` for expired Nab cutoffs. The hook patch may change only `.pre-commit-config.yaml`.
+The writer checks each patch before applying it and verifies cutoff removals before minting the App token. It then opens
+or updates one dependency PR from `automation/update-release-tools` to `main`. A lock or hook update runs the normal PR
+checks before merge.
 
 The writer uses a repository-only release App with Contents and Pull requests write access. Install the App on this
 repository, set `RELEASE_APP_CLIENT_ID` as a repository variable, and store `RELEASE_APP_PRIVATE_KEY` in the
@@ -101,18 +118,18 @@ jobs:
       RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
     with:
       lock-groups: >-
-        build lock-tools release-notes release-news release-prepare
+        build release-notes release-news release-prepare
         release-validate release-check release-attestations release-shell
         release-hooks release-hook-check
 ```
 
 The required `lock-groups` input lists the caller's release dependency groups, separated by spaces or newlines. Include
-`build` and `lock-tools` where declared; exclude test, type, and documentation groups. This example lists this
-repository's groups; a caller supplies its own. The project configures its Python and platform targets in `[tool.nab]`.
-Tests install test, type, and documentation groups afresh so they detect upstream dependency changes. The Action tests
-fetch immutable, hash-checked release-tool artifacts from the shared lock; their separate package fixture resolves
-test-only tools afresh. The updater also refreshes a caller's secondary build-matrix lock when `additional-lock` and its
-matrix inputs are set.
+`build` and the release groups used by the caller. `lock-tools` and `lock-reader` come from this Action's lock; include
+them only when the caller also uses them. Exclude test, type, and documentation groups. The project configures targets
+in `[tool.nab]`. Tests install test, type, and documentation groups afresh so they detect upstream dependency changes.
+The Action tests fetch immutable, hash-checked release-tool artifacts from the shared lock; their separate package
+fixture resolves test-only tools afresh. The updater also refreshes a caller's secondary build-matrix lock when
+`additional-lock` and its matrix inputs are set.
 
 The optional `commit-message`, `pull-request-title`, and `pull-request-body` inputs retain existing PR wording. The
 workflow does not update `uv.lock` or a checked-in constraints file. Build constraints are generated from the lock's
@@ -123,6 +140,8 @@ For a second lock such as `pylock.build.toml`, set `additional-lock`, `additiona
 groups in that lock; with no groups, the updater selects build requirements. Set `additional-lock-selection: project`
 for a lock that selects the project's runtime dependencies instead. The lock must already exist, and the updater writes
 both locks in the same dependency PR. The writer accepts only those locks, `pyproject.toml`, and the hook configuration.
+Pass the same `additional-lock` and matrix inputs to `validate-news` in the PR workflow. It checks changes to either
+lock against the project, including a PR that changes only the secondary lock.
 
 `refresh-release-lock` is the read-only half of the updater. In `refresh` mode, it upgrades the selected release groups
 under Nab's configured cutoff and writes `$RUNNER_TEMP/lock.patch` if either lock or a reviewed expired Nab cutoff
@@ -148,7 +167,7 @@ release-tools-preview:
     - uses: tox-dev/github-workflows/refresh-release-lock@SHA
       with:
         lock-groups: >-
-          build lock-tools release-notes release-news release-prepare
+          build lock-tools lock-reader release-notes release-news release-prepare
           release-validate release-check release-attestations release-shell
           release-hooks release-hook-check
         mode: check
@@ -164,7 +183,9 @@ with `actions: read`, `contents: read`, and `pull-requests: read`, then include 
 its PR number and head SHA from the event, compares them with the live PR, and requires each proposed revision to have
 appeared in a GitHub PR workflow run at least `minimum-days` earlier. The default is seven days. A force push does not
 reset an unchanged revision's age or give a new revision the old one's age. Human PRs pass without installing hook
-tools.
+tools. Other bot PRs may change hook revisions only. On `automation/update-release-tools`, the Action verifies the bot
+against `RELEASE_APP_CLIENT_ID` and permits exact, cooled PyPI dependency pins generated by the release App. It keeps
+the same seven-day revision observation rule, so current revisions may remain pending after the lock refresh.
 
 ```yaml
 hook-cooldown:
@@ -176,42 +197,53 @@ hook-cooldown:
     pull-requests: read
   steps:
     - uses: tox-dev/github-workflows/check-hook-update-cooldown@SHA
+      with:
+        release-app-client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
 ```
 
 Run the PR workflow on `opened`, `reopened`, and `synchronize`; the cooldown check must succeed on PRs and may skip on
 push. The Action has no output or write side effect. Schedule `recheck-hook-update-cooldown` daily with
 `actions: write`, `contents: read`, and `pull-requests: read`. It reruns eligible failed cooldown jobs at the current
 head. GitHub accepts reruns for 30 days. A failed rerun is retried on the next schedule while eligible. The
-[caller here](.github/workflows/recheck-hook-cooldown.yaml) shows the trigger and permissions. Set `workflow` or
-`job-name` only when the caller uses different names.
+[caller here](.github/workflows/recheck-hook-cooldown.yaml) shows the trigger and permissions. The Action reruns the
+`hook-cooldown` job in `check.yaml`.
+
+If the job has a different name or workflow filename, pass both to the scheduled caller:
+
+```yaml
+with:
+  workflow: ci.yaml
+  job-name: check-hook-updates
+```
 
 ## Start with a caller
 
 The [release preparation workflow](.github/workflows/prepare-release.yaml) in this repository calls the reusable
-Towncrier workflow. Its `assemble` job creates a patch and validates it in a fresh worktree without the App key. Its
-`push` job downloads that artifact by ID and checks its paths and modes before minting a repository-scoped App token.
-Set the tag style in the caller and the changelog path and fragment directory in committed Towncrier configuration. Pin
-the reusable workflow to a release commit SHA; `SHA` in these examples means that commit.
+Towncrier workflow. Its `assemble` job uploads a patch; a separate keyless `validate` job downloads and checks that
+artifact. The `push` job downloads the same artifact by ID and checks its paths and modes before minting a
+repository-scoped App token. Set the tag style in the caller and the changelog path and fragment directory in committed
+Towncrier configuration. Pin the reusable workflow to a release commit SHA; `SHA` in these examples means that commit.
 
-Assembly needs release history to select a tag. The writer can check out the source commit with `fetch-depth: 1`. Both
+Assembly needs release history to select a tag. The writer can check out the source commit with `fetch-depth: 1`. All
 jobs use `persist-credentials: false`. Assembly installs the caller's locked release tools and needs `contents: read`
-and `pull-requests: read` to resolve PR authors. It starts `prek install-hooks` while creating the validation worktree
-and building the changelog, then waits for the hooks before formatting and validating the patch. The writer uses the
-`release-auth` environment with `RELEASE_APP_PRIVATE_KEY` and `RELEASE_APP_CLIENT_ID`. Restrict that environment to
-`main`. Install the App on this repository only, with Contents write and Metadata read, and grant the necessary branch
-and tag ruleset bypass.
+and `pull-requests: read` to resolve PR authors. It starts `prek install-hooks` while building the changelog, then waits
+for the hooks before formatting and uploading the patch. The validation job runs `prek` on that uploaded patch. The
+writer uses the `release-auth` environment with `RELEASE_APP_PRIVATE_KEY` and `RELEASE_APP_CLIENT_ID`. Restrict that
+environment to `main`. Install the App on this repository only, with Contents write and Metadata read, and grant the
+necessary branch and tag ruleset bypass.
 
 ```text
 main + fragments
        │
        ▼
-prepare-towncrier ──► validate in fresh worktree ──► upload patch by ID
-                                                       │
-                                                       ▼
-                                     verify patch ──► mint App token
-                                                       │
-                                                       ▼
-                                              commit-and-tag ──► main + tag
+prepare-towncrier ──► upload patch ──► validate artifact
+                            │                   │
+                            └─────────┬─────────┘
+                                      ▼
+                          verify paths and modes
+                                      │
+                                      ▼
+                           mint App token ──► commit-and-tag ──► main + tag
 ```
 
 The tag starts the caller's publisher. Keep PyPI trusted publishing in that top-level workflow, in a separate job with
@@ -243,10 +275,10 @@ The caller needs `release-check` for prek and a `build` group for backend constr
 
 Publish only after the reusable workflow succeeds. Download the distribution with pinned `download-artifact`
 [v8.0.2](https://github.com/actions/download-artifact/blob/9000827ccba6bdab643e8b6fd33ac0654aef8333/action.yml#L37-L45),
-which checks the artifact digest. Render GitHub notes in the caller's tag workflow after fetching GitHub's contributor
-metadata; this reusable workflow does not render notes. Keep PyPI OIDC in the caller's `release` environment job. Older
-callers may still pass `changelog`, `artifact-base-url`, `artifact-label`, or `local-tool-source`. These inputs are
-accepted for compatibility but have no effect; remove them when updating the caller workflow.
+using `artifact-ids: ${{ needs.build.outputs.distributions-artifact-id }}`. The download checks the artifact digest and
+selects the wheel and sdist from that build run. Render GitHub notes in the caller's tag workflow after fetching
+GitHub's contributor metadata; this reusable workflow does not render notes. Keep PyPI OIDC in the caller's `release`
+environment job.
 
 ## Build a distribution for a pull request
 
@@ -257,11 +289,9 @@ from the distribution build.
 
 ```yaml
   - uses: tox-dev/github-workflows/build-python-distribution@SHA
-    with:
-      source: .
 ```
 
-`source` defaults to `.`. The Action has no named output; subsequent steps read `dist/`.
+The Action builds the checkout root and has no named output; subsequent steps read `dist/`.
 
 ## Export constraints for a build matrix
 
@@ -283,10 +313,11 @@ build package versions; otherwise the Action fails instead of writing an ambiguo
 
 ## Prepare and tag with one reusable workflow
 
-`prepare-towncrier-release.yaml` runs two jobs. `assemble` selects a tag and writes a Towncrier patch without the App
-key, applies it in a fresh worktree, and runs `prek`. `push` downloads the patch by artifact ID and checks its paths and
-file modes, reads the caller's `release-auth` environment, and uses a repository-scoped App token to push the release
-commit and tag together. Only a dispatch from `main` can reach the writer.
+`prepare-towncrier-release.yaml` runs three jobs. `assemble` selects a tag and uploads a Towncrier patch without the App
+key. `validate` calculates the next tag again from the checked-out source, then applies the uploaded artifact and runs
+`prek`. `push` downloads that artifact by ID, checks its paths and file modes, reads the caller's `release-auth`
+environment, and uses a repository-scoped App token to push the release commit and tag together. Only a dispatch from
+`main` can reach the writer.
 
 ```yaml
 jobs:
@@ -333,8 +364,8 @@ committed bytes so an untrusted release patch cannot change the allowed paths or
     run: printf '%s\n' "$CHANGELOG"
 ```
 
-`working-directory` defaults to `.`; pass a different checkout when validating a patch in a linked worktree. Outputs are
-`changelog`, `fragments`, and `format` (`markdown` or `rst`). The Action does not modify the checkout or GitHub state.
+Outputs are `changelog`, `fragments`, and `format` (`markdown` or `rst`). The Action does not modify the checkout or
+GitHub state.
 
 ## Prepare Towncrier release
 
@@ -389,8 +420,6 @@ and mode checks with `checks: "false"`, without installing release tools.
 
 - `version` **(required)**: Exact tag chosen by preparation. `release-creator notes` must find one valid section for it.
 - `patch` **(required)**: Local path of the downloaded patch artifact, not an artifact name or URL.
-- `working-directory`: Checkout where the patch is applied; default `.`. Assembly uses a fresh linked worktree here so
-  validation cannot pass because of files left by preparation.
 - `checks`: `true` (default) runs `release-creator` and `prek`; `false` only applies and checks the validated patch.
 
 **Output:** No named output. **Working-tree effect:** Applies and stages the patch. The Action reads the changelog path,

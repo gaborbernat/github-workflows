@@ -22,6 +22,8 @@ _REVIEWED_VERSIONS: Final = {
     },
     ("release-creator", "0.6.5"): datetime(2026, 10, 23, 19, 54, 50, tzinfo=UTC),
     ("release-creator", "0.6.6"): datetime(2026, 10, 23, 20, 48, 24, tzinfo=UTC),
+    ("release-creator", "0.6.7"): datetime(2026, 10, 23, 21, 40, 6, tzinfo=UTC),
+    ("release-creator", "1.0.0"): datetime(2026, 10, 24, 6, 7, 46, tzinfo=UTC),
     ("uv-build", "0.13.4"): datetime(2026, 10, 21, tzinfo=UTC),
 }
 _REVIEWED_EXCEPTIONS: Final = {
@@ -55,6 +57,7 @@ def validate_recent_cutoffs(project: str, threshold: datetime) -> None:
     for name, settings in nab.get("index", {}).items():
         if "uploaded-prior-to" in settings:
             raise ValueError(f"Nab index cutoff for {name} bypasses the seven-day policy")
+    validate_indexes(nab)
     for name, value in candidates:
         if value is False:
             raise ValueError(f"Nab cutoff for {name} weakens the seven-day policy: {value}")
@@ -71,6 +74,15 @@ def validate_recent_cutoffs(project: str, threshold: datetime) -> None:
             reviewed for (package, _), reviewed in _REVIEWED_VERSIONS.items() if package == name
         }:
             raise ValueError(f"unreviewed recent Nab cutoff for {name}: {timestamp.isoformat()}")
+
+
+def validate_indexes(nab: dict) -> None:
+    if any(index != {"name": "pypi", "url": "https://pypi.org/simple/"} for index in nab.get("indexes", [])):
+        raise ValueError("custom Nab indexes are not approved for release locks")
+    if nab.get("index") or any("index" in settings for settings in nab.get("packages", {}).values()):
+        raise ValueError("custom Nab indexes are not approved for release locks")
+    if any("index" in settings for settings in nab.get("package-rules", [])):
+        raise ValueError("custom Nab indexes are not approved for release locks")
 
 
 def remove_expired_cutoffs(project: str, threshold: datetime) -> str:
@@ -143,5 +155,6 @@ __all__ = [
     "remove_cutoffs",
     "remove_expired_cutoffs",
     "reviewed_cutoff",
+    "validate_indexes",
     "validate_recent_cutoffs",
 ]

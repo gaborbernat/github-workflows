@@ -13,6 +13,7 @@ from typing import NotRequired, TypedDict, cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+import certifi
 from packaging.utils import (
     InvalidSdistFilename,
     InvalidWheelFilename,
@@ -34,10 +35,9 @@ def main() -> None:
     parser.add_argument("project")
     parser.add_argument("version")
     parser.add_argument("dist", type=Path)
-    parser.add_argument("--wait-seconds", type=int, default=120)
     args = parser.parse_args()
     try:
-        for path in verify_files(args.project, args.version, args.dist, args.wait_seconds):
+        for path in verify_files(args.project, args.version, args.dist, 120):
             print(path)
     except (OSError, TypeError, ValueError, IncompleteRead) as error:
         parser.error(str(error))
@@ -131,7 +131,9 @@ def _listing(project: str) -> list[_SimpleFile]:
         headers={"Accept": "application/vnd.pypi.simple.v1+json", "Cache-Control": "no-cache"},
     )
     try:
-        with urlopen(request, timeout=30) as response:  # ruff: ignore[suspicious-url-open-usage]  # Fixed PyPI origin.
+        with urlopen(  # ruff: ignore[suspicious-url-open-usage]  # Fixed PyPI origin.
+            request, timeout=30, context=ssl.create_default_context(cafile=certifi.where())
+        ) as response:
             payload = json.load(response)
     except HTTPError as error:
         if error.code == 404:

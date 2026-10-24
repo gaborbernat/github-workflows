@@ -38,6 +38,8 @@ jobs:
           groups: release-check
           venv: .release-tools
       - name: Check repository formatting
+        env:
+          UV_EXCLUDE_NEWER: 7 days
         run: prek run --all-files
   shell:
     runs-on: ubuntu-26.04
@@ -105,12 +107,8 @@ jobs:
         with:
           groups: release-news release-shell
           venv: .release-tools
-      - name: Install current test tools
-        run: |
-          uv venv --python 3.15 .venv
-          uv pip install --python .venv/bin/python --group test
       - name: Run Action tests
-        run: .venv/bin/pytest -q -n auto
+        run: uvx --with tox-uv tox run -e test
   type:
     runs-on: ubuntu-26.04
     permissions:
@@ -139,6 +137,8 @@ jobs:
       pull-requests: read
     steps:
       - uses: $/check-hook-update-cooldown
+        with:
+          release-app-client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
   release-tools-preview:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-26.04
@@ -160,7 +160,7 @@ jobs:
       - uses: $/refresh-release-lock
         with:
           lock-groups: >-
-            build lock-tools release-notes release-news release-prepare release-validate release-check release-attestations release-shell release-hooks release-hook-check
+            build lock-tools lock-reader release-notes release-news release-prepare release-validate release-check release-attestations release-shell release-hooks release-hook-check
           mode: check
   gate:
     name: ${{ github.event_name == 'pull_request' && 'Required checks pass' || 'Required checks pass (non-PR)' }}

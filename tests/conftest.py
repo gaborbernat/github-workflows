@@ -11,7 +11,7 @@ from hashlib import sha256
 from html import escape
 from pathlib import Path
 from textwrap import dedent
-from typing import Final
+from typing import Final, TypedDict, cast
 from urllib.parse import urlsplit
 from urllib.request import urlopen
 
@@ -22,6 +22,11 @@ import yaml
 from packaging.utils import canonicalize_name
 from pytest_httpserver import HTTPServer
 from werkzeug.wrappers import Request, Response
+
+_PyPIFile = TypedDict(
+    "_PyPIFile",
+    {"filename": str, "url": str, "hashes": dict[str, str], "upload-time": str},
+)
 
 
 @pytest.fixture
@@ -136,6 +141,54 @@ def test_package_index(httpserver: HTTPServer, test_package_lock: Path, artifact
 @pytest.fixture(scope="session")
 def artifact_cache() -> dict[str, bytes]:
     return {}
+
+
+@pytest.fixture(scope="session")
+def pypi_metadata(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    listings = _lock_metadata(Path(__file__).resolve().parents[1] / "pylock.toml")
+    for filename, url, digest, uploaded in (
+        (
+            "six-1.16.0-py2.py3-none-any.whl",
+            "https://files.pythonhosted.org/packages/d9/5a/e7c31adbe875f2abbb91bd84cf2dc52d792b5a01506781dbcf25c91daf11/six-1.16.0-py2.py3-none-any.whl",
+            "8abb2f1d86890a2dfb989f9a77cfcfd3e47c2a354b01111771326f8aa26e0254",
+            "2021-05-05T14:18:17.237677+00:00",
+        ),
+        (
+            "packaging-25.0-py3-none-any.whl",
+            "https://files.pythonhosted.org/packages/20/12/38679034af332785aac8774540895e234f4d07f7545804097de4b666afd8/packaging-25.0-py3-none-any.whl",
+            "29572ef2b1f17581046b3a2227d5c611fb25ec70ca1ba8554b24b0e69331a484",
+            "2025-04-19T11:48:57.875608+00:00",
+        ),
+        (
+            "example-1.0-py3-none-any.whl",
+            "https://files.pythonhosted.org/example-1.0-py3-none-any.whl",
+            "0" * 64,
+            "2026-10-01T00:00:00+00:00",
+        ),
+        (
+            "example-2.0-py3-none-any.whl",
+            "https://files.pythonhosted.org/example-2.0-py3-none-any.whl",
+            "1" * 64,
+            "2026-10-01T00:00:00+00:00",
+        ),
+    ):
+        name = filename.split("-", 1)[0]
+        listings.setdefault(name, []).append(
+            {
+                "filename": filename,
+                "url": url,
+                "hashes": {"sha256": digest},
+                "upload-time": uploaded,
+            }
+        )
+    path = tmp_path_factory.mktemp("pypi-metadata") / "listings.json"
+    path.write_text(json.dumps(listings))
+    return path
+
+
+@pytest.fixture(autouse=True)
+def pypi_metadata_environment(pypi_metadata: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GW_PYPI_METADATA_FILE", str(pypi_metadata))
 
 
 @pytest.fixture(scope="session")
@@ -277,6 +330,13 @@ def build_repository(source_project: Path, nab_executable: Path, monkeypatch: py
         "--output",
         "pylock.toml",
     )
+    listings = cast("dict[str, list[_PyPIFile]]", json.loads(Path(os.environ["GW_PYPI_METADATA_FILE"]).read_text()))
+    for name, files in _lock_metadata(source_project / "pylock.toml").items():
+        existing = {file["filename"] for file in listings.get(name, [])}
+        listings.setdefault(name, []).extend(file for file in files if file["filename"] not in existing)
+    metadata = source_project.parent / "pypi-metadata.json"
+    metadata.write_text(json.dumps(listings))
+    monkeypatch.setenv("GW_PYPI_METADATA_FILE", str(metadata))
     run(source_project, "git", "add", ".")
     run(source_project, "git", "commit", "-m", "Add package source")
     run(source_project, "git", "push", "origin", "main")
@@ -294,6 +354,12 @@ def action(
     version: str,
     **extra_env: str,
 ) -> subprocess.CompletedProcess[str]:
+    if (
+        name in {"install-locked-tools", "export-build-constraints"}
+        and (repository / "pylock.toml").exists()
+        and not (repository / "pyproject.toml").exists()
+    ):
+        (repository / "pyproject.toml").write_text('[tool.nab]\nuploaded-prior-to = "P7D"\n')
     action_config = yaml.safe_load((Path(__file__).resolve().parents[1] / name / "action.yml").read_text())
     head = run(repository, "git", "rev-parse", "HEAD").stdout.strip() if (repository / ".git").exists() else "0" * 40
     input_values = {
@@ -472,7 +538,7 @@ def _condition(
 
 
 def _safe_environment() -> dict[str, str]:
-    return {
+    environment = {
         name: os.environ[name]
         for name in (
             "HOME",
@@ -486,9 +552,19 @@ def _safe_environment() -> dict[str, str]:
             "SSL_CERT_FILE",
             "GH_HOST",
             "GH_ENTERPRISE_TOKEN",
+            "COVERAGE_PROCESS_START",
+            "COVERAGE_PROCESS_CONFIG",
+            "GW_PYPI_METADATA_FILE",
         )
         if name in os.environ
     }
+    if "GW_PYPI_METADATA_FILE" in environment:
+        environment["PYTHONPATH"] = str(Path(__file__).parent / "coverage_bootstrap")
+    if "COVERAGE_PROCESS_CONFIG" in environment or "COVERAGE_PROCESS_START" in environment:
+        import coverage
+
+        environment["GW_COVERAGE_SITE_PACKAGES"] = str(Path(coverage.__file__).parent.parent)
+    return environment
 
 
 def _inputs(
@@ -532,7 +608,14 @@ def _expression(
     if " && " in expression and " || " in expression:
         condition, alternatives = expression.split(" && ", 1)
         true_value, false_value = alternatives.split(" || ", 1)
-        return (true_value if _condition(condition, environment, inputs, step_outputs) else false_value).strip("'")
+        return _expression(
+            true_value if _condition(condition, environment, inputs, step_outputs) else false_value,
+            environment,
+            inputs,
+            step_outputs,
+        )
+    if expression.startswith("'") and expression.endswith("'"):
+        return expression[1:-1]
     if " == " in expression or " != " in expression:
         return str(_condition(expression, environment, inputs, step_outputs)).lower()
     if " || " in expression:
@@ -565,6 +648,21 @@ def _expression(
         return environment.get("SKIP_NEWS", "false")
     msg = f"unsupported GitHub step environment: {expression}"
     raise ValueError(msg)
+
+
+def _lock_metadata(lock: Path) -> dict[str, list[_PyPIFile]]:
+    listings: dict[str, dict[str, _PyPIFile]] = {}
+    for package in tomllib.loads(lock.read_text())["packages"]:
+        files = listings.setdefault(canonicalize_name(package["name"]), {})
+        for artifact in [*package.get("wheels", []), *([package["sdist"]] if "sdist" in package else [])]:
+            filename = artifact.get("name") or urlsplit(artifact["url"]).path.rsplit("/", 1)[-1]
+            files[filename] = {
+                "filename": filename,
+                "url": artifact["url"],
+                "hashes": artifact["hashes"],
+                "upload-time": artifact["upload-time"].isoformat(),
+            }
+    return {name: list(files.values()) for name, files in listings.items()}
 
 
 __all__ = [

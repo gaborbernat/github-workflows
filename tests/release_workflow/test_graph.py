@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -17,45 +18,111 @@ def test_prepare_workflow_calls_reusable_preparation() -> None:
     assert workflow["jobs"]["prepare"]["uses"] == "$/.github/workflows/prepare-towncrier-release.yaml"
 
 
+@pytest.mark.parametrize(
+    ("workflow", "job", "step_name"),
+    [
+        pytest.param("check.yaml", "check", "Check repository formatting", id="pull-request"),
+        pytest.param("release.yaml", "check", "Check tagged source", id="tagged-release"),
+        pytest.param("validate-python-release.yaml", "source-check", "Run tagged source checks", id="distribution"),
+        pytest.param("prepare-towncrier-release.yaml", "assemble", "Install prek hooks", id="prepare"),
+    ],
+)
+def test_release_hook_installation_has_cooldown(workflow: str, job: str, step_name: str) -> None:
+    document = yaml.safe_load((Path(__file__).resolve().parents[2] / ".github/workflows" / workflow).read_text())
+    step = next(item for item in document["jobs"][job]["steps"] if item.get("name") == step_name)
+    assert step["env"]["UV_EXCLUDE_NEWER"] == "7 days"
+
+
 def test_prepare_jobs_transfer_the_uploaded_patch() -> None:
     workflow = yaml.safe_load(
         (Path(__file__).resolve().parents[2] / ".github/workflows/prepare-towncrier-release.yaml").read_text()
     )
     jobs = workflow["jobs"]
-    assert list(jobs) == ["assemble", "push"]
+    assert list(jobs) == ["assemble", "validate", "push"]
     assert jobs["assemble"]["outputs"]["artifact-id"] == "${{ steps.patch.outputs.artifact-id }}"
     assert (
         next(step for step in jobs["assemble"]["steps"] if step.get("id") == "patch")["with"]["name"] == "release-patch"
     )
-    assert (
-        next(step for step in jobs["push"]["steps"] if "download-artifact" in step.get("uses", ""))["with"][
-            "artifact-ids"
-        ]
-        == "${{ needs.assemble.outputs.artifact-id }}"
-    )
+    for job in ("validate", "push"):
+        assert (
+            next(step for step in jobs[job]["steps"] if "download-artifact" in step.get("uses", ""))["with"][
+                "artifact-ids"
+            ]
+            == "${{ needs.assemble.outputs.artifact-id }}"
+        )
 
 
-def test_prepare_validates_patch_in_fresh_worktree() -> None:
+def test_prepare_validates_uploaded_patch_before_writer() -> None:
     workflow = yaml.safe_load(
         (Path(__file__).resolve().parents[2] / ".github/workflows/prepare-towncrier-release.yaml").read_text()
     )
-    steps = workflow["jobs"]["assemble"]["steps"]
-    worktree = next(step for step in steps if step.get("name") == "Create a fresh validation worktree")
-    validation = next(step for step in steps if step.get("uses") == "$/validate-release-patch")
-    assert "git worktree add --detach" in worktree["run"]
-    assert validation["with"]["working-directory"] == "${{ runner.temp }}/release-validation"
+    jobs = workflow["jobs"]
+    assert jobs["validate"]["permissions"] == {"contents": "read"}
+    assert jobs["validate"]["needs"] == "assemble"
+    assert jobs["push"]["needs"] == ["assemble", "validate"]
+    assert not any(step.get("uses") == "$/validate-release-patch" for step in jobs["assemble"]["steps"])
+    validation = next(step for step in jobs["validate"]["steps"] if step.get("uses") == "$/validate-release-patch")
+    assert validation["with"]["patch"] == "${{ runner.temp }}/release-patch/release.patch"
     assert (
-        steps.index(worktree)
-        < steps.index(validation)
-        < next(index for index, step in enumerate(steps) if step.get("id") == "patch")
+        next(step for step in jobs["push"]["steps"] if step.get("uses") == "$/validate-release-patch")["with"]["checks"]
+        == "false"
     )
 
 
-def test_prepare_builds_local_tool_once_with_locked_backends() -> None:
+@pytest.mark.parametrize(
+    ("version", "prefix", "accepted"),
+    [
+        pytest.param("1.2.3", "", True, id="calculated-version"),
+        pytest.param("v1.2.3", "v", True, id="prefixed-version"),
+        pytest.param("9.9.9", "", False, id="forged-version"),
+    ],
+)
+def test_prepare_validation_calculates_version_independently(
+    tmp_path: Path, version: str, prefix: str, accepted: bool
+) -> None:
     workflow = yaml.safe_load(
         (Path(__file__).resolve().parents[2] / ".github/workflows/prepare-towncrier-release.yaml").read_text()
     )
-    steps = workflow["jobs"]["assemble"]["steps"]
+    steps = workflow["jobs"]["validate"]["steps"]
+    verify = next(step for step in steps if step.get("name") == "Verify selected release version")
+    command = tmp_path / "bin/release-creator"
+    command.parent.mkdir()
+    expected_arguments = ["tags", "--next", "auto", "--directory", "changelog.d"]
+    if prefix:
+        expected_arguments.extend(["--prefix", prefix])
+    command.write_text(
+        f"#!{sys.executable}\nimport sys\nassert sys.argv[1:] == {expected_arguments!r}\nprint({f'{prefix}1.2.3'!r})\n"
+    )
+    command.chmod(0o755)
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+
+    result = subprocess.run(
+        ["bash", "-e", "-o", "pipefail", "-c", verify["run"]],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "PATH": f"{command.parent}{os.pathsep}{os.environ['PATH']}",
+            "BUMP": "auto",
+            "TAG_PREFIX": prefix,
+            "FRAGMENTS": "changelog.d",
+            "VERSION": version,
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert (result.returncode == 0) is accepted
+    if not accepted:
+        assert "assembled release version differs from 1.2.3" in result.stderr
+
+
+@pytest.mark.parametrize("job", ["assemble", "validate"])
+def test_prepare_builds_local_tool_with_locked_backends(job: str) -> None:
+    workflow = yaml.safe_load(
+        (Path(__file__).resolve().parents[2] / ".github/workflows/prepare-towncrier-release.yaml").read_text()
+    )
+    steps = workflow["jobs"][job]["steps"]
     builds = [step for step in steps if step.get("name") == "Build local release tool wheel"]
     assert len(builds) == 1
     assert builds[0]["env"]["BUILD_CONSTRAINTS"] == "${{ steps.tools.outputs.build-constraints }}"
