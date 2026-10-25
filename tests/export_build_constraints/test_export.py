@@ -5,20 +5,19 @@ import subprocess
 import sys
 import tomllib
 from collections.abc import Callable
-from datetime import UTC, datetime
+from copy import deepcopy
 from pathlib import Path
 from textwrap import dedent
 from typing import cast
 
 import pytest
 import tomlkit
-from conftest import action
+from conftest import CALLER, action
 
 
 def test_export_build_constraints_uses_checked_in_locks(tmp_path: Path, action_scripts: Path) -> None:
-    source = Path(__file__).resolve().parents[2]
-    (tmp_path / "pylock.toml").write_bytes((source / "pylock.toml").read_bytes())
-    (tmp_path / "pyproject.toml").write_bytes((source / "pyproject.toml").read_bytes())
+    (tmp_path / "pylock.toml").write_bytes((CALLER / "pylock.toml").read_bytes())
+    (tmp_path / "pyproject.toml").write_bytes((CALLER / "pyproject.toml").read_bytes())
     outputs: dict[str, str] = {}
     result = action(tmp_path, tmp_path, action_scripts, "export-build-constraints", outputs, version="")
     assert result.returncode == 0, result.stderr
@@ -33,9 +32,8 @@ def test_export_build_constraints_uses_checked_in_locks(tmp_path: Path, action_s
 def test_export_build_constraints_accepts_tool_only_project_without_build_group(
     tmp_path: Path, action_scripts: Path
 ) -> None:
-    source = Path(__file__).resolve().parents[2]
-    (tmp_path / "pyproject.toml").write_bytes((source / "pyproject.toml").read_bytes())
-    document = tomlkit.parse((source / "pylock.toml").read_text())
+    (tmp_path / "pyproject.toml").write_bytes((CALLER / "pyproject.toml").read_bytes())
+    document = tomlkit.parse((CALLER / "pylock.toml").read_text())
     document["dependency-groups"].remove("build")
     (tmp_path / "pylock.toml").write_text(tomlkit.dumps(document))
     outputs: dict[str, str] = {}
@@ -43,12 +41,12 @@ def test_export_build_constraints_accepts_tool_only_project_without_build_group(
     result = action(tmp_path, tmp_path, action_scripts, "export-build-constraints", outputs, version="")
 
     assert result.returncode == 0, result.stderr
-    assert "setuptools==" in Path(outputs["path"]).read_text()
+    assert Path(outputs["path"]).read_text() == ""
 
 
 def test_export_build_constraints_writes_empty_file_without_build_selection(tmp_path: Path) -> None:
     source = Path(__file__).resolve().parents[2]
-    document = tomlkit.parse((source / "pylock.toml").read_text())
+    document = tomlkit.parse((CALLER / "pylock.toml").read_text())
     document["dependency-groups"].remove("build")
     lock = tmp_path / "pylock.toml"
     lock.write_text(tomlkit.dumps(document))
@@ -84,7 +82,7 @@ def test_export_build_constraints_covers_release_runners(tmp_path: Path, platfor
             "--targets",
             "3.15.0:cpython",
             str(output),
-            str(source / "pylock.toml"),
+            str(CALLER / "pylock.toml"),
         ],
         text=True,
         capture_output=True,
@@ -92,47 +90,6 @@ def test_export_build_constraints_covers_release_runners(tmp_path: Path, platfor
     )
     assert result.returncode == 0, result.stderr
     assert "setuptools==" in output.read_text()
-
-
-@pytest.mark.parametrize(
-    ("version", "accepted"),
-    [pytest.param("81.0.0", True, id="compatible"), pytest.param("79.0.0", False, id="incompatible")],
-)
-def test_export_build_constraints_prefers_compatible_caller_build_pin(
-    tmp_path: Path, version: str, accepted: bool
-) -> None:
-    source = Path(__file__).resolve().parents[2]
-    shared = source / "pylock.toml"
-    caller = tmp_path / "pylock.toml"
-    document = tomlkit.parse(shared.read_text())
-    for package in document["packages"]:
-        if package["name"] == "setuptools":
-            current = package["version"]
-            package["version"] = version
-            for wheel in package["wheels"]:
-                wheel["url"] = wheel["url"].replace(current, version)
-            package["sdist"]["url"] = package["sdist"]["url"].replace(current, version)
-    caller.write_text(tomlkit.dumps(document))
-    output = tmp_path / "constraints.txt"
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(source / "tools/build_constraints.py"),
-            "--shared-policy",
-            str(source / "pyproject.toml"),
-            str(output),
-            str(shared),
-            str(caller),
-        ],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    assert (result.returncode == 0) == accepted
-    if accepted:
-        assert f"setuptools=={version} " in output.read_text()
-    else:
-        assert "violates setuptools>=80" in result.stderr
 
 
 @pytest.mark.parametrize(
@@ -169,12 +126,6 @@ def test_export_build_constraints_selects_explicit_targets(tmp_path: Path, platf
 @pytest.mark.parametrize(
     ("arguments", "message"),
     [
-        pytest.param(["{output}", "{lock}", "{lock}", "{lock}"], "at most one shared", id="three-locks"),
-        pytest.param(
-            ["--shared-policy", "{project}", "{output}", "{lock}"],
-            "shared-policy requires a shared and caller lock",
-            id="policy-without-caller",
-        ),
         pytest.param(
             ["--target-platform", "unknown", "--targets", "3.15.0:cpython", "{output}", "{lock}"],
             "unknown target platform",
@@ -202,7 +153,7 @@ def test_export_build_constraints_rejects_invalid_arguments(
     source = Path(__file__).resolve().parents[2]
     lock = tmp_path / "pylock.build.toml"
     write_matrix_lock(lock)
-    paths = {"output": str(tmp_path / "constraints.txt"), "lock": str(lock), "project": str(source / "pyproject.toml")}
+    paths = {"output": str(tmp_path / "constraints.txt"), "lock": str(lock), "project": str(CALLER / "pyproject.toml")}
     script = source / "tools/build_constraints.py"
     command = runpy.run_path(str(script), run_name="build_constraints_imported")
     monkeypatch.setattr(sys, "argv", [str(script), *(argument.format_map(paths) for argument in arguments)])
@@ -256,33 +207,28 @@ def test_export_build_constraints_rejects_untrusted_build_packages(tmp_path: Pat
     assert message in result.stderr
 
 
-def test_export_build_constraints_rejects_conflicting_versions_without_policy(tmp_path: Path) -> None:
+def test_export_build_constraints_rejects_conflicting_versions(tmp_path: Path) -> None:
     source = Path(__file__).resolve().parents[2]
-    shared = source / "pylock.toml"
-    caller = tmp_path / "pylock.toml"
-    document = tomlkit.parse(shared.read_text())
+    document = tomlkit.parse((CALLER / "pylock.toml").read_text())
     package = next(package for package in document["packages"] if package["name"] == "setuptools")
-    current = package["version"]
-    package["version"] = "81.0.0"
-    for artifact in [package["sdist"], *package["wheels"]]:
+    other = deepcopy(package)
+    current = other["version"]
+    other["version"] = "81.0.0"
+    for artifact in [other["sdist"], *other["wheels"]]:
         artifact["url"] = artifact["url"].replace(current, "81.0.0")
-    caller.write_text(tomlkit.dumps(document))
+    document["packages"].append(other)
+    lock = tmp_path / "pylock.toml"
+    lock.write_text(tomlkit.dumps(document))
 
     result = subprocess.run(
-        [
-            sys.executable,
-            str(source / "tools/build_constraints.py"),
-            str(tmp_path / "constraints.txt"),
-            str(shared),
-            str(caller),
-        ],
+        [sys.executable, str(source / "tools/build_constraints.py"), str(tmp_path / "constraints.txt"), str(lock)],
         text=True,
         capture_output=True,
         check=False,
     )
 
     assert result.returncode != 0
-    assert "conflicting build dependency versions for setuptools" in result.stderr
+    assert "Multiple packages with the name 'setuptools'" in result.stderr
 
 
 def test_export_build_constraints_action_selects_secondary_lock(tmp_path: Path, action_scripts: Path) -> None:
@@ -304,53 +250,6 @@ def test_export_build_constraints_action_selects_secondary_lock(tmp_path: Path, 
     assert result.returncode == 0, result.stderr
     output = Path(outputs["path"])
     assert output.read_text() == expected
-
-
-def test_export_build_constraints_action_rejects_wrong_pypi_digest(tmp_path: Path, action_scripts: Path) -> None:
-    lock = tmp_path / "pylock.build.toml"
-    write_published_matrix_lock(lock)
-    document = tomlkit.parse(lock.read_text())
-    document["packages"][0]["wheels"][0]["hashes"]["sha256"] = "0" * 64
-    lock.write_text(tomlkit.dumps(document))
-
-    result = action(
-        tmp_path,
-        tmp_path,
-        action_scripts,
-        "export-build-constraints",
-        version="",
-        LOCK="pylock.build.toml",
-        TARGET_PLATFORM="macos_arm64",
-        TARGETS="3.15.0:cpython",
-    )
-
-    assert result.returncode != 0
-    assert "release lock differs from PyPI metadata: packaging:" in result.stderr
-
-
-@pytest.mark.parametrize("groups", ["", "release-check"], ids=["export-only", "with-installed-group"])
-def test_export_build_constraints_rejects_uncooled_secondary_lock(
-    tmp_path: Path, action_scripts: Path, groups: str
-) -> None:
-    lock = tmp_path / "pylock.build.toml"
-    write_published_matrix_lock(lock)
-    document = tomlkit.parse(lock.read_text())
-    document["packages"][0]["wheels"][0]["upload-time"] = datetime(2099, 1, 1, tzinfo=UTC)
-    lock.write_text(tomlkit.dumps(document))
-    result = action(
-        tmp_path,
-        tmp_path,
-        action_scripts,
-        "install-locked-tools" if groups else "export-build-constraints",
-        version="",
-        LOCK="pylock.build.toml",
-        LOCK_SOURCE="shared",
-        CONSTRAINTS_LOCK="pylock.build.toml",
-        GROUPS=groups,
-        VENV=str(tmp_path / "tools"),
-    )
-    assert result.returncode != 0
-    assert "uncooled artifact" in result.stderr
 
 
 def test_export_build_constraints_rejects_different_target_versions(tmp_path: Path, action_scripts: Path) -> None:
@@ -430,11 +329,10 @@ def test_export_build_constraints_uses_full_python_version(tmp_path: Path, versi
 
 def write_published_matrix_lock(path: Path) -> str:
     write_matrix_lock(path)
-    source = Path(__file__).resolve().parents[2]
-    (path.parent / "pyproject.toml").write_bytes((source / "pyproject.toml").read_bytes())
+    (path.parent / "pyproject.toml").write_bytes((CALLER / "pyproject.toml").read_bytes())
     package = next(
         package
-        for package in tomllib.loads((source / "pylock.toml").read_text())["packages"]
+        for package in tomllib.loads((CALLER / "pylock.toml").read_text())["packages"]
         if package["name"] == "packaging"
     )
     document = tomlkit.parse(path.read_text())

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from pytest_httpserver import HTTPServer
 
 
 @pytest.mark.parametrize(
@@ -76,56 +77,14 @@ def test_prepare_validation_calculates_version_independently(
         assert "assembled release version differs from 1.2.3" in result.stderr
 
 
-def test_local_release_creator_builds_with_locked_backends(tmp_path: Path) -> None:
-    step = yaml.safe_load(
-        (Path(__file__).resolve().parents[2] / "install-local-release-creator/action.yml").read_text()
-    )["runs"]["steps"][0]
-    fake_bin = tmp_path / "fake-bin"
-    fake_bin.mkdir()
-    (fake_bin / "uv").write_text(
-        '#!/bin/sh\necho "$@" >>"$RUNNER_TEMP/uv-calls"\n'
-        'if [ "$1" = build ]; then mkdir -p "$RUNNER_TEMP/local-tool-dist" && touch "$RUNNER_TEMP/local-tool-dist/x.whl"; fi\n'
-        f'if [ "$1" = run ]; then shift 4; shift; exec {sys.executable} "$@"; fi\n'
-    )
-    (fake_bin / "uv").chmod(0o755)
-    command = tmp_path / ".venv/bin/release-creator"
-    command.parent.mkdir(parents=True)
-    command.symlink_to(sys.executable)
-    output = tmp_path / "github-path"
-
-    result = subprocess.run(
-        ["bash", "-e", "-o", "pipefail", "-c", step["run"]],
-        cwd=tmp_path,
-        env=os.environ
-        | {
-            "PATH": f"{fake_bin}:{os.environ['PATH']}",
-            "BUILD_CONSTRAINTS": "constraints.txt",
-            "GITHUB_WORKSPACE": str(tmp_path),
-            "RUNNER_TEMP": str(tmp_path),
-            "GITHUB_PATH": str(output),
-            "GITHUB_ACTION_PATH": str(Path(__file__).resolve().parents[2] / "install-local-release-creator"),
-        },
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert result.returncode == 0, result.stderr
-    build, install, _ = (tmp_path / "uv-calls").read_text().splitlines()
-    assert "--build-constraints constraints.txt --require-build-hashes" in build
-    assert install.endswith(f"--no-deps {tmp_path}/local-tool-dist/x.whl")
-    overlay = Path(output.read_text().strip())
-    assert [path.name for path in overlay.iterdir()] == ["release-creator"]
-    assert (overlay / "release-creator").resolve() == command.resolve()
-
-
 def test_release_writer_has_only_notes_and_reconciler() -> None:
     workflow = yaml.safe_load((Path(__file__).resolve().parents[2] / ".github/workflows/release.yaml").read_text())
     publish = workflow["jobs"]["publish"]
     assert publish["permissions"] == {"contents": "write"}
-    assert publish["needs"] == ["check", "source", "notes"]
-    assert [step["uses"] for step in publish["steps"]] == [
+    assert publish["needs"] == ["source", "notes"]
+    assert [step.get("uses", step.get("name")) for step in publish["steps"]] == [
         "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333",
+        "Require the tag to still name the release commit",
         "$/publish-github-release",
     ]
     assert publish["steps"][-1]["with"]["commit"] == "${{ needs.source.outputs.commit }}"
@@ -136,7 +95,8 @@ def test_shfmt_hook_rejects_unformatted_inline_shell(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     script = tmp_path / "inline-shell-check.sh"
     script.write_text("#!/usr/bin/env bash\nif true\nthen\necho x\nfi\n")
-    executable = shutil.which("prek")
+    tools = Path(__file__).resolve().parents[2] / ".release-tools/bin"
+    executable = shutil.which("prek", path=f"{tools}{os.pathsep}{os.environ['PATH']}")
     assert executable is not None
     result = subprocess.run(
         [
@@ -163,3 +123,41 @@ def test_action_manifests_have_no_empty_environment_mapping() -> None:
     for path in root.glob("*/action.yml"):
         action = yaml.safe_load(path.read_text())
         assert all("env" not in step or isinstance(step["env"], dict) for step in action["runs"]["steps"]), path
+
+
+@pytest.mark.parametrize(("tag_commit", "accepted"), [("a" * 40, True), ("b" * 40, False)], ids=["same", "moved"])
+def test_release_writer_requires_the_tag_at_the_event_commit(
+    tmp_path: Path, github_api: tuple[HTTPServer, dict[str, str]], tag_commit: str, accepted: bool
+) -> None:
+    server, environment = github_api
+    server.expect_request("/api/v3/repos/tox-dev/fixture/commits/refs/tags/1.0.0").respond_with_json(
+        {"sha": tag_commit}
+    )
+    workflow = yaml.safe_load((Path(__file__).resolve().parents[2] / ".github/workflows/release.yaml").read_text())
+    step = next(
+        step
+        for step in workflow["jobs"]["publish"]["steps"]
+        if step.get("name") == "Require the tag to still name the release commit"
+    )
+
+    result = subprocess.run(
+        ["bash", "-e", "-o", "pipefail", "-c", step["run"]],
+        cwd=tmp_path,
+        env=os.environ | environment | {"GITHUB_REPOSITORY": "tox-dev/fixture", "GITHUB_SHA": "a" * 40, "TAG": "1.0.0"},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert (result.returncode == 0) is accepted, result.stderr
+
+
+def test_release_notes_render_read_only_from_full_history() -> None:
+    workflow = yaml.safe_load((Path(__file__).resolve().parents[2] / ".github/workflows/release.yaml").read_text())
+    notes = workflow["jobs"]["notes"]
+    checkout = next(step for step in notes["steps"] if "checkout" in step.get("uses", ""))
+
+    assert notes["permissions"] == {"contents": "read"}
+    assert "needs" not in notes
+    assert checkout["with"]["fetch-depth"] == 0
+    assert set(workflow["jobs"]) == {"source", "notes", "publish"}

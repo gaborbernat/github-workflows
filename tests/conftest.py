@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import ssl
 import subprocess
@@ -10,22 +11,17 @@ import tomllib
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 from textwrap import dedent
-from typing import Final, TypedDict, cast
-from urllib.parse import urlsplit
+from typing import Final
 
 import certifi
 import coverage
 import pytest
 import trustme
 import yaml
-from packaging.utils import canonicalize_name
 from pytest_httpserver import HTTPServer
 from werkzeug.wrappers import Request, Response
 
-_PyPIFile = TypedDict(
-    "_PyPIFile",
-    {"filename": str, "url": str, "hashes": dict[str, str], "upload-time": str},
-)
+CALLER: Final = Path(__file__).parent / "fixtures/caller"
 
 
 @pytest.fixture
@@ -51,12 +47,22 @@ def github_api(tmp_path: Path) -> Iterator[tuple[HTTPServer, dict[str, str]]]:
     server.stop()
 
 
+@pytest.fixture
+def caller(tmp_path: Path) -> Path:
+    root = tmp_path / "caller"
+    root.mkdir()
+    for name in ("pylock.toml", "pyproject.toml"):
+        shutil.copyfile(CALLER / name, root / name)
+    return root
+
+
 @pytest.fixture(scope="session")
 def action_scripts(tmp_path_factory: pytest.TempPathFactory) -> Path:
     source = Path(__file__).resolve().parents[1]
     scripts = tmp_path_factory.mktemp("action-steps")
     for action_name in (
         "prepare-towncrier",
+        "cooled-prek",
         "validate-release-patch",
         "commit-and-tag",
         "render-release-notes",
@@ -71,10 +77,7 @@ def action_scripts(tmp_path_factory: pytest.TempPathFactory) -> Path:
         "reconcile-pypi-artifacts",
         "publish-jetbrains-marketplace",
         "sign-jetbrains-plugin",
-        "check-hook-update-cooldown",
-        "recheck-hook-update-cooldown",
         "publish-post-release-pr",
-        "verify-frozen-hooks",
     ):
         action = yaml.safe_load((source / action_name / "action.yml").read_text())
         for index, step in enumerate(action["runs"]["steps"]):
@@ -87,74 +90,11 @@ def action_scripts(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.fixture(scope="session")
-def pypi_metadata(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    listings = _lock_metadata(Path(__file__).resolve().parents[1] / "pylock.toml")
-    for filename, url, digest, uploaded in (
-        (
-            "six-1.16.0-py2.py3-none-any.whl",
-            "https://files.pythonhosted.org/packages/d9/5a/e7c31adbe875f2abbb91bd84cf2dc52d792b5a01506781dbcf25c91daf11/six-1.16.0-py2.py3-none-any.whl",
-            "8abb2f1d86890a2dfb989f9a77cfcfd3e47c2a354b01111771326f8aa26e0254",
-            "2021-05-05T14:18:17.237677+00:00",
-        ),
-        (
-            "packaging-25.0-py3-none-any.whl",
-            "https://files.pythonhosted.org/packages/20/12/38679034af332785aac8774540895e234f4d07f7545804097de4b666afd8/packaging-25.0-py3-none-any.whl",
-            "29572ef2b1f17581046b3a2227d5c611fb25ec70ca1ba8554b24b0e69331a484",
-            "2025-04-19T11:48:57.875608+00:00",
-        ),
-        (
-            "example-1.0-py3-none-any.whl",
-            "https://files.pythonhosted.org/example-1.0-py3-none-any.whl",
-            "0" * 64,
-            "2026-10-01T00:00:00+00:00",
-        ),
-        (
-            "example-2.0-py3-none-any.whl",
-            "https://files.pythonhosted.org/example-2.0-py3-none-any.whl",
-            "1" * 64,
-            "2026-10-01T00:00:00+00:00",
-        ),
-    ):
-        name = filename.split("-", 1)[0]
-        listings.setdefault(name, []).append(
-            {
-                "filename": filename,
-                "url": url,
-                "hashes": {"sha256": digest},
-                "upload-time": uploaded,
-            }
-        )
-    path = tmp_path_factory.mktemp("pypi-metadata") / "listings.json"
-    path.write_text(json.dumps(listings))
-    return path
-
-
-@pytest.fixture(autouse=True)
-def pypi_metadata_environment(pypi_metadata: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GW_PYPI_METADATA_FILE", str(pypi_metadata))
-
-
-@pytest.fixture(scope="session")
 def nab_executable(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    root = Path(__file__).resolve().parents[1]
     environment = tmp_path_factory.mktemp("nab-tools")
-    subprocess.run(["uv", "venv", "--python", "3.15", str(environment)], check=True, capture_output=True)
     subprocess.run(
-        [
-            "uv",
-            "pip",
-            "sync",
-            "--preview-features",
-            "pylock",
-            "--python",
-            str(environment / "bin/python"),
-            "--group",
-            "lock-tools",
-            "--only-binary",
-            ":all:",
-            "--require-hashes",
-            str(root / "pylock.toml"),
-        ],
+        [str(Path(__file__).resolve().parents[1] / "tools/install_live_tools.sh"), str(environment), "nab>=0.0.22"],
+        env=os.environ | {"EXCLUDE_NEWER": "7 days"},
         check=True,
         capture_output=True,
     )
@@ -195,35 +135,52 @@ def repository(tmp_path: Path, github_api: tuple[HTTPServer, dict[str, str]], mo
     for name, value in environment.items():
         monkeypatch.setenv(name, value)
 
-    def associated_pulls(request: Request) -> Response:
+    author = {"login": "gaborbernat", "__typename": "User"}
+
+    def graphql(request: Request) -> Response:
         query = request.get_json()["query"]
-        commits = (part.split('"', 1)[0] for part in query.split('object(oid: "')[1:])
-        return Response(
-            json.dumps(
-                {
-                    "data": {
-                        "repository": {
-                            f"c{index}": {
-                                "associatedPullRequests": {
-                                    "nodes": [
-                                        {
-                                            "number": int(environment.get("TEST_PULL_NUMBER", "2")),
-                                            "mergedAt": "2026-10-22T00:00:00Z",
-                                            "mergeCommit": {"oid": commit},
-                                            "author": {"login": "gaborbernat", "__typename": "User"},
-                                        }
-                                    ]
+        if 'object(oid: "' in query:
+            commits = (part.split('"', 1)[0] for part in query.split('object(oid: "')[1:])
+            data: dict[str, object] = {
+                "repository": {
+                    f"c{index}": {
+                        "associatedPullRequests": {
+                            "nodes": [
+                                {
+                                    "number": int(environment.get("TEST_PULL_NUMBER", "2")),
+                                    "mergedAt": "2026-10-22T00:00:00Z",
+                                    "mergeCommit": {
+                                        "oid": commit,
+                                        "authors": {
+                                            "nodes": [
+                                                {"name": "Release test", "email": "a@example.org", "user": author}
+                                            ]
+                                        },
+                                    },
+                                    "author": author,
                                 }
-                            }
-                            for index, commit in enumerate(commits)
+                            ]
                         }
                     }
+                    for index, commit in enumerate(commits)
                 }
-            ),
-            mimetype="application/json",
-        )
+            }
+        elif "pullRequest(number: " in query:
+            numbers = re.findall(r"p(\d+): pullRequest", query)
+            data = {
+                "repository": {
+                    f"p{number}": {"number": int(number), "mergedAt": "2026-10-22T00:00:00Z", "author": author}
+                    for number in numbers
+                }
+            }
+        else:
+            data = {
+                alias: {"issueCount": int(environment.get("TEST_PRIOR_PULLS", "0"))}
+                for alias in re.findall(r"(s\d+): search", query)
+            }
+        return Response(json.dumps({"data": data}), mimetype="application/json")
 
-    server.expect_request("/api/graphql", method="POST").respond_with_handler(associated_pulls)
+    server.expect_request("/api/graphql", method="POST").respond_with_handler(graphql)
     return worktree
 
 
@@ -255,9 +212,9 @@ def source_project(repository: Path) -> Path:
 def build_repository(source_project: Path, nab_executable: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.delenv("SSL_CERT_FILE", raising=False)
     project = source_project / "pyproject.toml"
-    release_requirement = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text())[
-        "dependency-groups"
-    ]["release-notes"][0]
+    release_requirement = tomllib.loads((CALLER / "pyproject.toml").read_text())["dependency-groups"]["release-notes"][
+        0
+    ]
     project.write_text(
         project.read_text()
         + f"\n[dependency-groups]\nrelease-notes = [{json.dumps(release_requirement)}]\n"
@@ -273,14 +230,6 @@ def build_repository(source_project: Path, nab_executable: Path, monkeypatch: py
         "--output",
         "pylock.toml",
     )
-    listings = cast("dict[str, list[_PyPIFile]]", json.loads(Path(os.environ["GW_PYPI_METADATA_FILE"]).read_text()))
-    for name, files in _lock_metadata(source_project / "pylock.toml").items():
-        merged = {file["filename"]: file for file in listings.get(name, [])}
-        merged.update({file["filename"]: file for file in files})
-        listings[name] = list(merged.values())
-    metadata = source_project.parent / "pypi-metadata.json"
-    metadata.write_text(json.dumps(listings))
-    monkeypatch.setenv("GW_PYPI_METADATA_FILE", str(metadata))
     run(source_project, "git", "add", ".")
     run(source_project, "git", "commit", "-m", "Add package source")
     run(source_project, "git", "push", "origin", "main")
@@ -298,12 +247,6 @@ def action(
     version: str,
     **extra_env: str,
 ) -> subprocess.CompletedProcess[str]:
-    if (
-        name in {"install-locked-tools", "export-build-constraints"}
-        and (repository / "pylock.toml").exists()
-        and not (repository / "pyproject.toml").exists()
-    ):
-        (repository / "pyproject.toml").write_text('[tool.nab]\nuploaded-prior-to = "P7D"\n')
     if name == "validate-release-patch" and (prepared := tmp_path / "release.patch").exists():
         (tmp_path / "release-patch").mkdir(exist_ok=True)
         shutil.copyfile(prepared, tmp_path / "release-patch/release.patch")
@@ -317,20 +260,14 @@ def action(
         "CHANGELOG": "CHANGELOG.md",
         "FRAGMENTS": "changelog.d",
         "FORMAT": action_config.get("inputs", {}).get("format", {}).get("default", "none"),
-        "EXPECTED_SHA": head,
         "CHECKS": "true",
         "BRANCH": "main",
-        "REMOTE": "origin",
         "ANNOTATED": "false",
         "ARTIFACT_URL": "",
         "ARTIFACT_LABEL": "PyPI release",
         "LOCK": "pylock.toml",
-        "GENERATED_NOTES": "",
         "MODE": "complete",
-        "RUN_ID": "42",
-        "WORKFLOW_PATH": ".github/workflows/check.yaml",
     } | extra_env
-    input_values["REPOSITORY"] = extra_env.get("REPOSITORY", "tox-dev/fixture")
     inputs = _inputs(action_config, input_values)
     input_names = {input_name.replace("-", "_").upper() for input_name in action_config.get("inputs", {})}
     environment: dict[str, str] = (
@@ -372,8 +309,6 @@ def _run_action(
         if (condition := step.get("if")) is not None and not _condition(condition, environment, inputs, step_outputs):
             continue
         if (used := step.get("uses")) is not None:
-            if used.startswith("astral-sh/setup-uv@"):
-                continue
             if used.startswith("actions/upload-artifact@"):
                 continue
             nested_name = used.removeprefix("$/")
@@ -468,11 +403,6 @@ def _condition(
         return any(_condition(part, environment, inputs, step_outputs) for part in expression.split(" || "))
     if " && " in expression:
         return all(_condition(part, environment, inputs, step_outputs) for part in expression.split(" && "))
-    for function in ("startsWith", "endsWith"):
-        if expression.startswith(f"{function}(") and expression.endswith(")"):
-            subject, affix = expression.removeprefix(f"{function}(").removesuffix(")").split(", ", 1)
-            value = _expression(subject, environment, inputs, step_outputs)
-            return value.startswith(affix.strip("'")) if function == "startsWith" else value.endswith(affix.strip("'"))
     for operator in (" == ", " != "):
         if operator in expression:
             left, right = expression.split(operator, 1)
@@ -498,7 +428,6 @@ def _safe_environment() -> dict[str, str]:
             "GH_ENTERPRISE_TOKEN",
             "COVERAGE_PROCESS_START",
             "COVERAGE_PROCESS_CONFIG",
-            "GW_PYPI_METADATA_FILE",
         )
         if name in os.environ
     }
@@ -558,26 +487,11 @@ def _expression(
         return expression[1:-1]
     if " == " in expression or " != " in expression:
         return str(_condition(expression, environment, inputs, step_outputs)).lower()
-    if " || " in expression:
-        return next(
-            (
-                value
-                for part in expression.split(" || ")
-                if (value := _expression(part, environment, inputs, step_outputs))
-            ),
-            "",
-        )
     if expression.startswith("inputs."):
         return inputs[expression.removeprefix("inputs.")]
     if expression.startswith("steps."):
         _, step_id, _, output_name = expression.split(".")
         return step_outputs.get(step_id, {}).get(output_name, "")
-    if expression == "runner.temp":
-        return environment["RUNNER_TEMP"]
-    if expression == "github.ref":
-        return environment.get("GITHUB_REF", "")
-    if expression == "github.ref_name":
-        return environment.get("GITHUB_REF_NAME", "")
     if expression == "github.repository":
         return environment["GITHUB_REPOSITORY"]
     if expression == "github.base_ref":
@@ -591,22 +505,8 @@ def _expression(
     raise ValueError(f"unsupported GitHub step environment: {expression}")  # pragma: no cover - new syntax only
 
 
-def _lock_metadata(lock: Path) -> dict[str, list[_PyPIFile]]:
-    listings: dict[str, dict[str, _PyPIFile]] = {}
-    for package in tomllib.loads(lock.read_text())["packages"]:
-        files = listings.setdefault(canonicalize_name(package["name"]), {})
-        for artifact in [*package.get("wheels", []), *([package["sdist"]] if "sdist" in package else [])]:
-            filename = artifact.get("name") or urlsplit(artifact["url"]).path.rsplit("/", 1)[-1]
-            files[filename] = {
-                "filename": filename,
-                "url": artifact["url"],
-                "hashes": artifact["hashes"],
-                "upload-time": artifact["upload-time"].isoformat(),
-            }
-    return {name: list(files.values()) for name, files in listings.items()}
-
-
 __all__ = [
+    "CALLER",
     "action",
     "run",
 ]

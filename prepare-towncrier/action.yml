@@ -93,6 +93,28 @@ runs:
           ;;
         esac
         towncrier build --yes --version "$CHANGELOG_PREFIX${VERSION#v}"
+    - name: Add new contributors to the changelog
+      if: inputs.phase != 'finalize'
+      shell: bash
+      env:
+        VERSION: ${{ steps.version.outputs.version }}
+        CHANGELOG_PREFIX: ${{ inputs.changelog-prefix }}
+        CHANGELOG: ${{ steps.config.outputs.changelog }}
+        REPOSITORY: ${{ github.repository }}
+        GH_TOKEN: ${{ github.token }}
+      run: >-
+        release-creator contributors --changelog "$CHANGELOG" --version "$CHANGELOG_PREFIX${VERSION#v}" --repository "$REPOSITORY"
+    - name: Reject other hook configurations
+      if: inputs.phase != 'build'
+      shell: bash
+      run: |
+        set -euo pipefail
+        others=$(git ls-files -- ':(glob)**/prek.toml' ':(glob)**/.pre-commit-config.yml' \
+          ':(glob)*/**/.pre-commit-config.yaml')
+        if [[ -n "$others" ]]; then
+          echo "::error::hooks must be configured only in the root .pre-commit-config.yaml: ${others//$'\n'/, }" >&2
+          exit 1
+        fi
     - name: Format changelog
       if: inputs.phase != 'build'
       shell: bash

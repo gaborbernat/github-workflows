@@ -9,22 +9,10 @@ license-files = [ "LICENSE" ]
 
 [dependency-groups]
 build = [ "Cython>=3.0", "setuptools>=80" ]
-lock-tools = [ "nab==0.0.22", "tomlkit>=0.13" ]
-lock-reader = [ "certifi>=2026.7.22", "packaging>=26.3" ]
-release-notes = [ "release-creator>=2.0.0" ]
-release-resolver = [ "uv==0.13.5" ]
-release-mise-editor = [ "pyyaml>=6" ]
-release-news = [ "release-creator>=2.0.0", "towncrier>=26.9" ]
-release-prepare = [ "release-creator>=2.0.0", "towncrier>=26.9", "prek>=0.2" ]
-release-validate = [ "release-creator>=2.0.0", "prek>=0.2" ]
-release-check = [ "prek>=0.2" ]
-release-attestations = [ "certifi>=2026.7.22", "pypi-attestations>=0.0.30" ]
-release-shell = [ "prek>=0.2", "yq>=4.4.5" ]
-release-hooks = [ "release-creator>=2.0.0", "prek>=0.2" ]
-release-hook-check = [ "prek>=0.2", "yq>=4.4.5" ]
+release-prepare = [ "release-creator>=3.1.0", "towncrier>=26.9", "prek>=0.2" ]
+release-validate = [ "release-creator>=3.1.0", "prek>=0.2" ]
 test = [
   "certifi",
-  "check-wheel-contents>=0.6.3",
   "coverage[toml]>=7.10",
   "hatchling>=1.28",
   "pytest>=9",
@@ -36,19 +24,20 @@ test = [
   "tox>=4.64.7",
   "tox-uv>=1.36.1",
   "trustme",
-  "twine>=7",
   "ty",
 ]
 
-[tool.release-creator.locks.exclude-newer-package]
-nab = "2026-10-18T05:45:09Z"
-nab-index = "2026-10-18T05:45:09Z"
-nab-markersets = "2026-10-18T05:45:09Z"
-nab-project = "2026-10-18T05:45:09Z"
-nab-provider = "2026-10-18T05:45:09Z"
-nab-resolver = "2026-10-18T05:45:09Z"
-release-creator = "2026-10-25T07:08:32Z"
-uv = "2026-10-22T01:32:34Z"
+[tool.nab]
+mode = "universal"
+uploaded-prior-to = "P7D"
+
+[tool.nab.matrix]
+python = ">=3.15,<3.16"
+platforms = ["linux_x86_64"]
+
+# Temporary: release-creator 3.1.0 is younger than seven days. Delete after 2026-11-02.
+[tool.nab.packages.release-creator]
+uploaded-prior-to = 2026-10-25T21:03:31Z
 
 [tool.ruff]
 line-length = 120

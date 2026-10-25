@@ -2,7 +2,7 @@ name: Export build constraints
 description: Write hashed build dependencies selected from the caller's pylock
 inputs:
   lock:
-    description: pylock.toml merges shared and caller pins; another lock uses only its build pins
+    description: Lock whose build group supplies the constraints, such as pylock.build.toml
     default: pylock.toml
   target-platform:
     description: Nab platform ID such as linux_aarch64; required with targets
@@ -12,6 +12,12 @@ inputs:
     default: ""
   verify-groups:
     description: Additional lock groups whose packages enter the release build
+    default: ""
+  exclude-newer:
+    description: Upload cutoff for the tools this Action installs from PyPI
+    default: 7 days
+  exclude-newer-package:
+    description: Newline-separated name=date cutoffs that override exclude-newer for single packages
     default: ""
 outputs:
   path:
@@ -23,9 +29,10 @@ runs:
     - id: tools
       uses: $/install-locked-tools
       with:
-        lock-source: shared
         constraints-lock: ${{ inputs.lock }}
         verify-lock: ${{ inputs.verify-groups != '' && inputs.lock || '' }}
         verify-groups: ${{ inputs.verify-groups }}
         target-platform: ${{ inputs.target-platform }}
         targets: ${{ inputs.targets }}
+        exclude-newer: ${{ inputs.exclude-newer }}
+        exclude-newer-package: ${{ inputs.exclude-newer-package }}
