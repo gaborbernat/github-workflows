@@ -2,6 +2,121 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-5-0-0"></a>
+
+## 5.0.0 (2026-10-25)
+
+<a name="release-5-0-0-added"></a>
+
+### Added
+
+- Add `exclude-newer` and `exclude-newer-package` inputs to every Action and reusable workflow that installs its own
+  tools. `exclude-newer` defaults to `7 days`; `exclude-newer-package` takes newline-separated `name=date` overrides for
+  an emergency ([#20](https://github.com/tox-dev/github-workflows/pull/20)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Add a temporary `nab-git-commit` input to `refresh-release-lock` and to the Actions and reusable workflows that call
+  it. A full commit SHA installs Nab from `notatallshaw/nab` at that commit, with no cooldown, until a Nab release
+  carries the fix ([#20](https://github.com/tox-dev/github-workflows/pull/20)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Add the `cooled-prek` Action, which runs prek with the root configuration and hook environments built under the
+  seven-day cutoff. The prepare workflow now installs its hooks through it
+  ([#20](https://github.com/tox-dev/github-workflows/pull/20)) by [@gaborbernat](https://github.com/gaborbernat).
+- Run `release-creator contributors` after the Towncrier build in `prepare-towncrier`, so the changelog section gets a
+  "New Contributors" subsection. It needs release-creator 3.1.0
+  ([#20](https://github.com/tox-dev/github-workflows/pull/20)) by [@gaborbernat](https://github.com/gaborbernat).
+
+<a name="release-5-0-0-changes"></a>
+
+### Changes
+
+- Drop the hook pin mention from the default `pull-request-body` of `upgrade-release-tools.yaml`, which now reads
+  "Refresh the project lock." ([#20](https://github.com/tox-dev/github-workflows/pull/20)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Let `validate-news` accept a pull request that removes `pylock.toml` when the project has no `[tool.nab]` table and no
+  `additional-lock` is configured, so nothing would produce a lock
+  ([#20](https://github.com/tox-dev/github-workflows/pull/20)) by [@gaborbernat](https://github.com/gaborbernat).
+- Make `check-tagged-source` require that the tag resolves to `GITHUB_SHA`, as the Python release build job does
+  ([#20](https://github.com/tox-dev/github-workflows/pull/20)) by [@gaborbernat](https://github.com/gaborbernat).
+- Make the github-workflows release job check that the tag still resolves to the tagged commit before it creates the
+  GitHub Release, and check the tag inline instead of through `check-tagged-source`
+  ([#20](https://github.com/tox-dev/github-workflows/pull/20)) by [@gaborbernat](https://github.com/gaborbernat).
+- Reject a primary lock refresh that changes the lock's target environments, as the secondary lock refresh already does
+  ([#20](https://github.com/tox-dev/github-workflows/pull/20)) by [@gaborbernat](https://github.com/gaborbernat).
+
+<a name="release-5-0-0-breaking-changes"></a>
+
+### Breaking changes
+
+- Accept only `pylock.toml` and the configured secondary lock in the `upgrade-release-tools.yaml` patch.
+  `pyproject.toml` and `uv.lock` changes are rejected ([#20](https://github.com/tox-dev/github-workflows/pull/20)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Generate the primary `pylock.toml` with `nab lock --all-groups --all-extras --no-cache`, adding `--upgrade` in
+  `refresh` mode, and compare a regenerated lock in `check` mode. The `release-creator locks` path and the uv resolver
+  steps are gone, so relock a `release-creator locks` lock with Nab before re-pinning. Nab runs without `SSL_CERT_FILE`
+  and `SSL_CERT_DIR` ([#20](https://github.com/tox-dev/github-workflows/pull/20)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Remove GitHub's generated notes from the release path: the `generated-notes` input of `render-release-notes` is gone,
+  and the github-workflows release no longer has a Contents-write job that fetches contributor metadata. The read-only
+  notes job now runs in parallel with the tag check and renders the notes from the full history alone
+  ([#20](https://github.com/tox-dev/github-workflows/pull/20)) by [@gaborbernat](https://github.com/gaborbernat).
+- Remove the Actions' shared `pylock.toml`, its weekly refresh, and the `lock-source` input of `install-locked-tools`.
+  The Actions now install the newest release of each of their own tools, above a minimum version, that is older than a
+  seven-day cutoff, and `install-locked-tools` installs only from the caller's `pylock.toml`. Build constraints come
+  from the caller lock's `build` group alone, without the shared Cython and setuptools pins
+  ([#20](https://github.com/tox-dev/github-workflows/pull/20)) by [@gaborbernat](https://github.com/gaborbernat).
+- Remove the `--shared-policy` option and two-lock merging from `tools/build_constraints.py`; it now exports the build
+  constraints of one lock ([#20](https://github.com/tox-dev/github-workflows/pull/20)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Remove the `check-hook-update-cooldown` and `recheck-hook-update-cooldown` Actions and the
+  `recheck-hook-cooldown.yaml` workflow. Pull requests that change `.pre-commit-config.yaml` are no longer checked for
+  hook revision age or dependency closure cooling; drop the `hook-cooldown` job and its scheduled rerun from callers
+  ([#20](https://github.com/tox-dev/github-workflows/pull/20)) by [@gaborbernat](https://github.com/gaborbernat).
+- Remove the `install-local-release-creator` Action and the `local-tool-source` input of `install-locked-tools` and
+  `prepare-towncrier-release.yaml`. A lock may no longer list release-creator as a local directory package
+  ([#20](https://github.com/tox-dev/github-workflows/pull/20)) by [@gaborbernat](https://github.com/gaborbernat).
+- Remove the `keep-uv-lock` input of `refresh-release-lock`, `validate-news`, `check-tagged-source`,
+  `prepare-towncrier-release.yaml`, `upgrade-release-tools.yaml`, and `validate-python-release.yaml`. A committed
+  `uv.lock` is no longer refreshed or checked ([#20](https://github.com/tox-dev/github-workflows/pull/20)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Remove the `refresh-mise-pin` Action. Callers that pinned a mise binary with it keep `jdx/mise-action`'s default
+  release age instead ([#20](https://github.com/tox-dev/github-workflows/pull/20)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Remove the `verify-frozen-hooks` Action with its frozen revision, tagged hook provenance, and hook dependency closure
+  checks. The shared prepare workflow and `check-tagged-source` no longer run it; drop it from custom tag jobs.
+  `prepare-towncrier` and `validate-release-patch` now reject a `prek.toml` or a nested hook configuration before they
+  run `prek` ([#20](https://github.com/tox-dev/github-workflows/pull/20)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Remove the hook refresh from `upgrade-release-tools.yaml`. The weekly updater no longer runs
+  `prek update --freeze --cooldown-days 7` or `release-creator hooks`, and its writer accepts only the lock patch; let
+  Dependabot's `pre-commit` ecosystem update hook revisions instead
+  ([#20](https://github.com/tox-dev/github-workflows/pull/20)) by [@gaborbernat](https://github.com/gaborbernat).
+- Remove the reviewed cutoff table, the recent cutoff check, the cutoff expiry, and the `verify-cutoff-patch` Action.
+  Callers own their per-package `uploaded-prior-to` exceptions in `[tool.nab]`, and gw neither checks nor expires them
+  ([#20](https://github.com/tox-dev/github-workflows/pull/20)) by [@gaborbernat](https://github.com/gaborbernat).
+- Restructure `validate-python-release.yaml`. A keyless `lock` job checks the locks in parallel with `build`, which now
+  checks the tag inline, including that it resolves to `GITHUB_SHA`, and exports its own build constraints; the
+  `source-check` and `constraints` jobs and the `build-constraints` artifact are gone. The `validate` job, which ran
+  `twine check` and `check-wheel-contents`, is removed; packages check their distributions with their own
+  `tox -e pkg_meta`. The workflow no longer needs `actions: read` or `pull-requests: read`
+  ([#20](https://github.com/tox-dev/github-workflows/pull/20)) by [@gaborbernat](https://github.com/gaborbernat).
+- Stop checking caller locks against PyPI metadata and upload times in `install-locked-tools`. `check_lock_groups.py`
+  now only checks that the selected groups exist, and Nab's regenerate-and-compare check in `refresh-release-lock`
+  guards the lock on pull requests, on tags, and in a new keyless `lock` job of `prepare-towncrier-release.yaml` that
+  runs before assembly ([#20](https://github.com/tox-dev/github-workflows/pull/20)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Stop running `prek` on the tagged source. `check-tagged-source` now checks only the tag and the locks and no longer
+  installs the caller's `release-check` group; the release patch is still checked with `prek` before it is pushed
+  ([#20](https://github.com/tox-dev/github-workflows/pull/20)) by [@gaborbernat](https://github.com/gaborbernat).
+
+<a name="release-5-0-0-packaging"></a>
+
+### Packaging
+
+- Lock github-workflows' own `release-prepare` and `release-validate` tools, with the `build` backends PyYAML needs, in
+  a small `pylock.toml` made by Nab under the seven-day cutoff, so its release preparation installs them hash-checked
+  from its own lock like every caller ([#20](https://github.com/tox-dev/github-workflows/pull/20)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-4-0-1"></a>
 
 ## 4.0.1 (2026-10-25)
