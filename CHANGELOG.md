@@ -2,6 +2,22 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-5-0-1"></a>
+
+## 5.0.1 (2026-10-25)
+
+<a name="release-5-0-1-fixed"></a>
+
+### Fixed
+
+- Install the whole Nab workspace from the `nab-git-commit` commit: `nab` and its `nab-index`, `nab-markersets`,
+  `nab-project`, `nab-provider`, and `nab-resolver` sub-packages, which the root pins to an unreleased version
+  ([#21](https://github.com/tox-dev/github-workflows/pull/21)) by [@gaborbernat](https://github.com/gaborbernat).
+- Let `check-tagged-source` accept a `workflow_dispatch` or other non-tag run, such as one from `main` with a `tag`
+  input, when the checkout is the commit that tag names and that commit is on `main`. Tag runs still require the tag,
+  `GITHUB_SHA`, and the checkout to match ([#21](https://github.com/tox-dev/github-workflows/pull/21)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-5-0-0"></a>
 
 ## 5.0.0 (2026-10-25)
