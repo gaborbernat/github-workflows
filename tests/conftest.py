@@ -2,20 +2,19 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import ssl
 import subprocess
 import sys
 import tomllib
 from collections.abc import Iterator, Mapping
-from hashlib import sha256
-from html import escape
 from pathlib import Path
 from textwrap import dedent
 from typing import Final, TypedDict, cast
 from urllib.parse import urlsplit
-from urllib.request import urlopen
 
 import certifi
+import coverage
 import pytest
 import trustme
 import yaml
@@ -75,6 +74,7 @@ def action_scripts(tmp_path_factory: pytest.TempPathFactory) -> Path:
         "check-hook-update-cooldown",
         "recheck-hook-update-cooldown",
         "publish-post-release-pr",
+        "verify-frozen-hooks",
     ):
         action = yaml.safe_load((source / action_name / "action.yml").read_text())
         for index, step in enumerate(action["runs"]["steps"]):
@@ -84,63 +84,6 @@ def action_scripts(tmp_path_factory: pytest.TempPathFactory) -> Path:
             path.write_text(f"#!/usr/bin/env bash\n{step['run']}")
             path.chmod(0o755)
     return scripts
-
-
-@pytest.fixture(scope="session")
-def test_package_lock(tmp_path_factory: pytest.TempPathFactory, nab_executable: Path) -> Path:
-    fixture = tmp_path_factory.mktemp("fixture-lock")
-    (fixture / "pyproject.toml").write_text(
-        '[project]\nname = "release-fixture"\nversion = "0.1.0"\nrequires-python = ">=3.15,<3.16"\n'
-        '[dependency-groups]\nfixture = ["check-wheel-contents>=0.6.3", "hatchling>=1.28", "twine>=7"]\n'
-        '[tool.nab]\nmode = "universal"\nbase-group = "project-runtime"\n'
-        'default-groups = []\n[tool.nab.matrix]\npython = ">=3.15,<3.16"\nplatforms = ["linux_x86_64"]\n'
-    )
-    subprocess.run(
-        [str(nab_executable), "lock", "--no-cache", "--groups", "fixture", "--output", "pylock.toml"],
-        cwd=fixture,
-        check=True,
-        capture_output=True,
-    )
-    return fixture / "pylock.toml"
-
-
-@pytest.fixture
-def test_package_index(httpserver: HTTPServer, test_package_lock: Path, artifact_cache: dict[str, bytes]) -> str:
-    packages = [
-        *tomllib.loads((Path(__file__).resolve().parents[1] / "pylock.toml").read_text())["packages"],
-        *tomllib.loads(test_package_lock.read_text())["packages"],
-    ]
-    listings: dict[str, list[str]] = {}
-    artifacts: dict[str, tuple[str, str]] = {}
-    for package in packages:
-        links = listings.setdefault(canonicalize_name(package["name"]), [])
-        for artifact in [*package.get("wheels", []), *([package["sdist"]] if "sdist" in package else [])]:
-            filename = artifact.get("name") or urlsplit(artifact["url"]).path.rsplit("/", 1)[-1]
-            digest = artifact["hashes"]["sha256"]
-            artifacts[filename] = artifact["url"], digest
-            links.append(
-                f'<a href="{escape(httpserver.url_for(f"/files/{filename}"))}#sha256={digest}" '
-                f'data-upload-time="{artifact["upload-time"].isoformat()}">{escape(filename)}</a>'
-            )
-    for name, links in listings.items():
-        httpserver.expect_request(f"/simple/{name}/").respond_with_data("\n".join(links), content_type="text/html")
-    for filename, (url, digest) in artifacts.items():
-
-        def serve(_request: Request, *, source: str = url, expected: str = digest) -> Response:
-            if expected not in artifact_cache:
-                with urlopen(source, timeout=30) as stream:
-                    artifact_cache[expected] = stream.read()
-            content = artifact_cache[expected]
-            assert sha256(content).hexdigest() == expected
-            return Response(content, mimetype="application/octet-stream")
-
-        httpserver.expect_request(f"/files/{filename}").respond_with_handler(serve)
-    return httpserver.url_for("/simple/")
-
-
-@pytest.fixture(scope="session")
-def artifact_cache() -> dict[str, bytes]:
-    return {}
 
 
 @pytest.fixture(scope="session")
@@ -361,6 +304,9 @@ def action(
         and not (repository / "pyproject.toml").exists()
     ):
         (repository / "pyproject.toml").write_text('[tool.nab]\nuploaded-prior-to = "P7D"\n')
+    if name == "validate-release-patch" and (prepared := tmp_path / "release.patch").exists():
+        (tmp_path / "release-patch").mkdir(exist_ok=True)
+        shutil.copyfile(prepared, tmp_path / "release-patch/release.patch")
     action_config = yaml.safe_load((Path(__file__).resolve().parents[1] / name / "action.yml").read_text())
     head = run(repository, "git", "rev-parse", "HEAD").stdout.strip() if (repository / ".git").exists() else "0" * 40
     input_values = {
@@ -371,7 +317,6 @@ def action(
         "CHANGELOG": "CHANGELOG.md",
         "FRAGMENTS": "changelog.d",
         "FORMAT": action_config.get("inputs", {}).get("format", {}).get("default", "none"),
-        "PATCH": str(tmp_path / "release.patch"),
         "EXPECTED_SHA": head,
         "CHECKS": "true",
         "BRANCH": "main",
@@ -431,9 +376,6 @@ def _run_action(
                 continue
             if used.startswith("actions/upload-artifact@"):
                 continue
-            if not used.startswith("$/"):
-                msg = f"unsupported nested action: {used}"
-                raise ValueError(msg)
             nested_name = used.removeprefix("$/")
             nested_config = yaml.safe_load((source / nested_name / "action.yml").read_text())
             nested_inputs = {
@@ -462,8 +404,6 @@ def _run_action(
                 return subprocess.CompletedProcess(result.args, result.returncode, "".join(stdout), "".join(stderr)), {}
             if step_id := step.get("id"):
                 step_outputs[step_id] = outputs
-            continue
-        if "run" not in step:
             continue
         script = action_scripts / f"{name}-{index}.sh"
         command = [*github_bash, str(script)]
@@ -528,16 +468,17 @@ def _condition(
         return any(_condition(part, environment, inputs, step_outputs) for part in expression.split(" || "))
     if " && " in expression:
         return all(_condition(part, environment, inputs, step_outputs) for part in expression.split(" && "))
-    if expression.startswith("endsWith(") and expression.endswith(")"):
-        arguments = expression.removeprefix("endsWith(").removesuffix(")").split(", ", 1)
-        return _expression(arguments[0], environment, inputs, step_outputs).endswith(arguments[1].strip("'"))
+    for function in ("startsWith", "endsWith"):
+        if expression.startswith(f"{function}(") and expression.endswith(")"):
+            subject, affix = expression.removeprefix(f"{function}(").removesuffix(")").split(", ", 1)
+            value = _expression(subject, environment, inputs, step_outputs)
+            return value.startswith(affix.strip("'")) if function == "startsWith" else value.endswith(affix.strip("'"))
     for operator in (" == ", " != "):
         if operator in expression:
             left, right = expression.split(operator, 1)
             equal = _expression(left, environment, inputs, step_outputs) == right.strip("'")
             return equal if operator == " == " else not equal
-    msg = f"unsupported GitHub step condition: {expression}"
-    raise ValueError(msg)
+    raise ValueError(f"unsupported GitHub step condition: {expression}")  # pragma: no cover - new syntax only
 
 
 def _safe_environment() -> dict[str, str]:
@@ -561,13 +502,10 @@ def _safe_environment() -> dict[str, str]:
         )
         if name in os.environ
     }
-    if "GW_PYPI_METADATA_FILE" in environment:
-        environment["PYTHONPATH"] = str(Path(__file__).parent / "coverage_bootstrap")
-    if "COVERAGE_PROCESS_CONFIG" in environment or "COVERAGE_PROCESS_START" in environment:
-        import coverage
-
-        environment["GW_COVERAGE_SITE_PACKAGES"] = str(Path(coverage.__file__).parent.parent)
-    return environment
+    return environment | {
+        "PYTHONPATH": str(Path(__file__).parent / "coverage_bootstrap"),
+        "GW_COVERAGE_SITE_PACKAGES": str(Path(coverage.__file__).parent.parent),
+    }
 
 
 def _inputs(
@@ -594,8 +532,7 @@ def _step_value(
     while (start := remainder.find("${{")) != -1:
         end = remainder.find("}}", start + 3)
         if end == -1:
-            msg = f"unterminated GitHub expression: {value}"
-            raise ValueError(msg)
+            raise ValueError(f"unterminated GitHub expression: {value}")  # pragma: no cover - new syntax only
         parts.append(remainder[:start])
         parts.append(_expression(remainder[start + 3 : end].strip(), environment, inputs, step_outputs))
         remainder = remainder[end + 2 :]
@@ -637,20 +574,21 @@ def _expression(
         return step_outputs.get(step_id, {}).get(output_name, "")
     if expression == "runner.temp":
         return environment["RUNNER_TEMP"]
+    if expression == "github.ref":
+        return environment.get("GITHUB_REF", "")
+    if expression == "github.ref_name":
+        return environment.get("GITHUB_REF_NAME", "")
     if expression == "github.repository":
         return environment["GITHUB_REPOSITORY"]
     if expression == "github.base_ref":
         return environment.get("BASE_REF", "")
-    if expression == "github.event.pull_request.number":
-        return environment.get("GITHUB_EVENT_PULL_REQUEST_NUMBER", "")
     if expression == "github.token":
         return environment.get("GH_TOKEN", environment.get("GH_ENTERPRISE_TOKEN", ""))
     if expression == "github.event.pull_request.user.type":
         return "Bot" if environment.get("BOT_AUTHOR") == "true" else "User"
     if expression == "contains(github.event.pull_request.labels.*.name, 'skip news')":
         return environment.get("SKIP_NEWS", "false")
-    msg = f"unsupported GitHub step environment: {expression}"
-    raise ValueError(msg)
+    raise ValueError(f"unsupported GitHub step environment: {expression}")  # pragma: no cover - new syntax only
 
 
 def _lock_metadata(lock: Path) -> dict[str, list[_PyPIFile]]:

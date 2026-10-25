@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import io
+import itertools
 import json
 import runpy
 import ssl
@@ -27,7 +28,7 @@ _SPEC = importlib.util.spec_from_file_location(
 assert _SPEC is not None and _SPEC.loader is not None
 _MODULE = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_MODULE)
-verify_files = cast("Callable[[str, str, Path, int], list[Path]]", _MODULE.verify_files)
+verify_files = cast("Callable[[str, str, Path], list[Path]]", _MODULE.verify_files)
 
 type _Json = None | bool | int | float | str | list[_Json] | dict[str, _Json]
 
@@ -36,6 +37,17 @@ class _ListingFile(TypedDict):
     filename: str
     hashes: dict[str, str]
     yanked: bool | str
+
+
+@pytest.fixture(autouse=True)
+def expired_deadline(mocker: MockerFixture) -> None:
+    mocker.patch.object(_MODULE.time, "monotonic", side_effect=itertools.count(step=121))
+    mocker.patch.object(_MODULE.time, "sleep")
+
+
+@pytest.fixture
+def waiting_clock(mocker: MockerFixture) -> None:
+    mocker.patch.object(_MODULE.time, "monotonic", return_value=0)
 
 
 @pytest.fixture
@@ -50,16 +62,16 @@ def distribution(tmp_path: Path) -> Path:
 def test_verify_files_matches_complete_release(distribution: Path, mocker: MockerFixture) -> None:
     _serve(mocker, distribution)
 
-    result = verify_files("fixture", "1.0", distribution, 0)
+    result = verify_files("fixture", "1.0", distribution)
 
     assert result == [distribution / "fixture-1.0-py3-none-any.whl", distribution / "fixture-1.0.tar.gz"]
 
 
 def test_verify_files_uses_pinned_trust_store(distribution: Path, mocker: MockerFixture) -> None:
-    request = mocker.patch.object(_MODULE, "urlopen", return_value=_body(_listing(distribution)))
+    request = mocker.patch.object(_MODULE, "urlopen", autospec=True, return_value=_body(_listing(distribution)))
     context = mocker.patch.object(ssl, "create_default_context", autospec=True)
 
-    verify_files("fixture", "1.0", distribution, 0)
+    verify_files("fixture", "1.0", distribution)
 
     assert request.call_args.kwargs["context"] is context.return_value
     assert context.call_args.kwargs == {"cafile": certifi.where()}
@@ -72,7 +84,7 @@ def test_verify_files_rejects_unsupported_simple_api(distribution: Path, mocker:
         return_value=io.BytesIO(json.dumps({"meta": {"api-version": "2.0"}, "files": _listing(distribution)}).encode()),
     )
     with pytest.raises(ValueError, match="unsupported PyPI Simple API version"):
-        verify_files("fixture", "1.0", distribution, 0)
+        verify_files("fixture", "1.0", distribution)
 
 
 def test_main_prints_distribution_paths(
@@ -98,13 +110,13 @@ def test_main_reports_invalid_directory(
         cast("Callable[[], None]", _MODULE.main)()
 
     assert raised.value.code == 2
-    assert "release files require a directory" in capsys.readouterr().err
+    assert "distribution directory does not exist" in capsys.readouterr().err
 
 
 def test_script_entrypoint_prints_distribution_paths(
     distribution: Path, mocker: MockerFixture, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    mocker.patch("urllib.request.urlopen", return_value=_body(_listing(distribution)))
+    mocker.patch("urllib.request.urlopen", autospec=True, return_value=_body(_listing(distribution)))
     mocker.patch("sys.argv", ["verify_pypi_files", "fixture", "1.0", str(distribution)])
 
     runpy.run_path(str(Path(__file__).resolve().parents[2] / "tools/verify_pypi_files.py"), run_name="__main__")
@@ -115,34 +127,29 @@ def test_script_entrypoint_prints_distribution_paths(
     ]
 
 
-@pytest.mark.parametrize(
-    "change", [pytest.param("negative-wait", id="negative-wait"), pytest.param("missing-dir", id="missing-dir")]
-)
-def test_verify_files_rejects_invalid_arguments(tmp_path: Path, change: str) -> None:
-    directory = tmp_path if change == "negative-wait" else tmp_path / "missing"
-
-    with pytest.raises(ValueError, match="release files require a directory and nonnegative wait"):
-        verify_files("fixture", "1.0", directory, -1 if change == "negative-wait" else 0)
+def test_verify_files_rejects_missing_directory(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="distribution directory does not exist"):
+        verify_files("fixture", "1.0", tmp_path / "missing")
 
 
 def test_verify_files_rejects_empty_directory(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="distribution directory is empty"):
-        verify_files("fixture", "1.0", tmp_path, 0)
+        verify_files("fixture", "1.0", tmp_path)
 
 
 def test_verify_files_rejects_directory_entry(distribution: Path) -> None:
     (distribution / "nested").mkdir()
 
     with pytest.raises(ValueError, match="invalid distribution path"):
-        verify_files("fixture", "1.0", distribution, 0)
+        verify_files("fixture", "1.0", distribution)
 
 
 def test_verify_files_ignores_other_release_wheel(distribution: Path, mocker: MockerFixture) -> None:
     files = _listing(distribution)
     files.append({"filename": "fixture-0.9-py3-none-any.whl", "hashes": {"sha256": "0" * 64}, "yanked": False})
-    mocker.patch.object(_MODULE, "urlopen", return_value=_body(files))
+    mocker.patch.object(_MODULE, "urlopen", autospec=True, return_value=_body(files))
 
-    assert verify_files("fixture", "1.0", distribution, 0) == [
+    assert verify_files("fixture", "1.0", distribution) == [
         distribution / "fixture-1.0-py3-none-any.whl",
         distribution / "fixture-1.0.tar.gz",
     ]
@@ -162,16 +169,16 @@ def test_verify_files_propagates_http_error(distribution: Path, mocker: MockerFi
     )
 
     with pytest.raises(HTTPError) as raised:
-        verify_files("fixture", "1.0", distribution, 0)
+        verify_files("fixture", "1.0", distribution)
 
     assert raised.value.code == status
 
 
 def test_verify_files_propagates_exhausted_connection_error(distribution: Path, mocker: MockerFixture) -> None:
-    mocker.patch.object(_MODULE, "urlopen", side_effect=URLError("offline"))
+    mocker.patch.object(_MODULE, "urlopen", autospec=True, side_effect=URLError("offline"))
 
     with pytest.raises(URLError, match="offline"):
-        verify_files("fixture", "1.0", distribution, 0)
+        verify_files("fixture", "1.0", distribution)
 
 
 def test_verify_files_reports_missing_release_after_404(distribution: Path, mocker: MockerFixture) -> None:
@@ -180,7 +187,7 @@ def test_verify_files_reports_missing_release_after_404(distribution: Path, mock
     )
 
     with pytest.raises(ValueError, match="PyPI is missing files"):
-        verify_files("fixture", "1.0", distribution, 0)
+        verify_files("fixture", "1.0", distribution)
 
 
 @pytest.mark.parametrize(
@@ -193,12 +200,12 @@ def test_verify_files_reports_missing_release_after_404(distribution: Path, mock
     ],
 )
 def test_verify_files_rejects_invalid_listing(distribution: Path, mocker: MockerFixture, payload: _Json) -> None:
-    mocker.patch.object(_MODULE, "urlopen", return_value=io.BytesIO(json.dumps(payload).encode()))
+    mocker.patch.object(_MODULE, "urlopen", autospec=True, return_value=io.BytesIO(json.dumps(payload).encode()))
 
     with pytest.raises(
         (TypeError, ValueError), match="invalid Simple API response|unsupported PyPI Simple API version"
     ):
-        verify_files("fixture", "1.0", distribution, 0)
+        verify_files("fixture", "1.0", distribution)
 
 
 @pytest.mark.parametrize(
@@ -218,15 +225,15 @@ def test_verify_files_rejects_invalid_file_entry(distribution: Path, mocker: Moc
     )
 
     with pytest.raises(TypeError, match="invalid file entry"):
-        verify_files("fixture", "1.0", distribution, 0)
+        verify_files("fixture", "1.0", distribution)
 
 
 def test_verify_files_ignores_legacy_egg_from_older_release(distribution: Path, mocker: MockerFixture) -> None:
     files = _listing(distribution)
     files.append({"filename": "fixture-0.8.1-py2.4.egg", "hashes": {"sha256": "0" * 64}, "yanked": False})
-    mocker.patch.object(_MODULE, "urlopen", return_value=_body(files))
+    mocker.patch.object(_MODULE, "urlopen", autospec=True, return_value=_body(files))
 
-    assert verify_files("fixture", "1.0", distribution, 0) == [
+    assert verify_files("fixture", "1.0", distribution) == [
         distribution / "fixture-1.0-py3-none-any.whl",
         distribution / "fixture-1.0.tar.gz",
     ]
@@ -247,9 +254,9 @@ def test_verify_files_ignores_legacy_files_from_other_versions(
         path.rename(path.with_name(path.name.replace("1.0", "0.9")))
     files = _listing(distribution)
     files.append({"filename": filename, "hashes": {"sha256": "0" * 64}, "yanked": False})
-    mocker.patch.object(_MODULE, "urlopen", return_value=_body(files))
+    mocker.patch.object(_MODULE, "urlopen", autospec=True, return_value=_body(files))
 
-    assert verify_files("fixture", "0.9", distribution, 0) == [
+    assert verify_files("fixture", "0.9", distribution) == [
         distribution / "fixture-0.9-py3-none-any.whl",
         distribution / "fixture-0.9.tar.gz",
     ]
@@ -273,7 +280,7 @@ def test_verify_files_rejects_bad_remote_release(
     _serve(mocker, distribution, change=change)
 
     with pytest.raises(ValueError, match=message):
-        verify_files("fixture", "1.0", distribution, 0)
+        verify_files("fixture", "1.0", distribution)
 
 
 @pytest.mark.parametrize(
@@ -293,9 +300,10 @@ def test_verify_files_rejects_bad_local_release(distribution: Path, change: str,
         (distribution / ".hidden").write_bytes(b"other")
 
     with pytest.raises(ValueError, match=message):
-        verify_files("fixture", "1.0", distribution, 0)
+        verify_files("fixture", "1.0", distribution)
 
 
+@pytest.mark.usefixtures("waiting_clock")
 def test_verify_files_waits_for_incomplete_listing(distribution: Path, mocker: MockerFixture) -> None:
     files = _listing(distribution)
     response = mocker.patch.object(
@@ -303,9 +311,8 @@ def test_verify_files_waits_for_incomplete_listing(distribution: Path, mocker: M
         "urlopen",
         side_effect=[_body(files[:-1]), _body(files)],
     )
-    mocker.patch.object(_MODULE.time, "sleep")
 
-    result = verify_files("fixture", "1.0", distribution, 2)
+    result = verify_files("fixture", "1.0", distribution)
 
     assert result == [distribution / "fixture-1.0-py3-none-any.whl", distribution / "fixture-1.0.tar.gz"]
     assert response.call_count == 2
@@ -329,13 +336,17 @@ def test_verify_files_waits_for_incomplete_listing(distribution: Path, mocker: M
         pytest.param(json.JSONDecodeError("truncated", "{", 1), id="truncated-json"),
     ],
 )
+@pytest.mark.usefixtures("waiting_clock")
 def test_verify_files_retries_transient_listing_failure(
-    distribution: Path, mocker: MockerFixture, failure: OSError | IncompleteRead | json.JSONDecodeError
+    distribution: Path,
+    mocker: MockerFixture,
+    failure: OSError | IncompleteRead | json.JSONDecodeError,
 ) -> None:
-    response = mocker.patch.object(_MODULE, "urlopen", side_effect=[failure, _body(_listing(distribution))])
-    mocker.patch.object(_MODULE.time, "sleep")
+    response = mocker.patch.object(
+        _MODULE, "urlopen", autospec=True, side_effect=[failure, _body(_listing(distribution))]
+    )
 
-    assert verify_files("fixture", "1.0", distribution, 2) == [
+    assert verify_files("fixture", "1.0", distribution) == [
         distribution / "fixture-1.0-py3-none-any.whl",
         distribution / "fixture-1.0.tar.gz",
     ]
@@ -349,27 +360,27 @@ def test_verify_files_retries_transient_listing_failure(
         pytest.param(IncompleteRead(b"partial", 10), id="incomplete-read"),
     ],
 )
+@pytest.mark.usefixtures("waiting_clock")
 def test_verify_files_retries_response_read_failure(
     distribution: Path, mocker: MockerFixture, failure: TimeoutError | IncompleteRead
 ) -> None:
     response = mocker.create_autospec(io.BytesIO, instance=True)
     response.__enter__.return_value.read.side_effect = failure
-    mocker.patch.object(_MODULE, "urlopen", side_effect=[response, _body(_listing(distribution))])
-    mocker.patch.object(_MODULE.time, "sleep")
+    mocker.patch.object(_MODULE, "urlopen", autospec=True, side_effect=[response, _body(_listing(distribution))])
 
-    assert verify_files("fixture", "1.0", distribution, 2) == [
+    assert verify_files("fixture", "1.0", distribution) == [
         distribution / "fixture-1.0-py3-none-any.whl",
         distribution / "fixture-1.0.tar.gz",
     ]
 
 
+@pytest.mark.usefixtures("waiting_clock")
 def test_verify_files_retries_truncated_json_response(distribution: Path, mocker: MockerFixture) -> None:
     response = mocker.patch.object(
         _MODULE, "urlopen", side_effect=[io.BytesIO(b'{"meta":'), _body(_listing(distribution))]
     )
-    mocker.patch.object(_MODULE.time, "sleep")
 
-    assert verify_files("fixture", "1.0", distribution, 2) == [
+    assert verify_files("fixture", "1.0", distribution) == [
         distribution / "fixture-1.0-py3-none-any.whl",
         distribution / "fixture-1.0.tar.gz",
     ]
@@ -379,7 +390,7 @@ def test_verify_files_retries_truncated_json_response(distribution: Path, mocker
 def test_main_reports_exhausted_incomplete_read(
     distribution: Path, mocker: MockerFixture, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    mocker.patch.object(_MODULE, "urlopen", side_effect=IncompleteRead(b"partial", 10))
+    mocker.patch.object(_MODULE, "urlopen", autospec=True, side_effect=IncompleteRead(b"partial", 10))
     mocker.patch.object(_MODULE.time, "monotonic", side_effect=[0, 121])
     mocker.patch("sys.argv", ["verify_pypi_files", "fixture", "1.0", str(distribution)])
 
@@ -390,6 +401,7 @@ def test_main_reports_exhausted_incomplete_read(
     assert "IncompleteRead" in capsys.readouterr().err
 
 
+@pytest.mark.usefixtures("waiting_clock")
 def test_verify_files_backs_off_between_retries(distribution: Path, mocker: MockerFixture) -> None:
     mocker.patch.object(
         _MODULE,
@@ -402,7 +414,7 @@ def test_verify_files_backs_off_between_retries(distribution: Path, mocker: Mock
     )
     sleep = mocker.patch.object(_MODULE.time, "sleep")
 
-    verify_files("fixture", "1.0", distribution, 5)
+    verify_files("fixture", "1.0", distribution)
 
     assert [call.args for call in sleep.call_args_list] == [(1,), (2,)]
 
@@ -423,7 +435,7 @@ def _serve(mocker: MockerFixture, distribution: Path, *, change: str = "") -> No
         files.append(files[0].copy())
     elif change == "invalid-name":
         files.append({"filename": "fixture-1.0.invalid", "hashes": {"sha256": "0" * 64}, "yanked": False})
-    mocker.patch.object(_MODULE, "urlopen", return_value=_body(files))
+    mocker.patch.object(_MODULE, "urlopen", autospec=True, return_value=_body(files))
 
 
 def _listing(distribution: Path) -> list[_ListingFile]:

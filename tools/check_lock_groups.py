@@ -19,7 +19,7 @@ from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 import certifi
-from lock_groups import lock_provider, project_selections
+from lock_groups import lock_provider, validate_workspace_sources
 from nab_cutoffs import reviewed_cutoff, validate_indexes
 from packaging._parser import Variable
 from packaging.markers import Marker
@@ -44,6 +44,10 @@ def main() -> None:
             parser.error("at least one dependency group is required")
         with args.lock.open("rb") as stream:
             lock = Pylock.from_dict(tomllib.load(stream))
+        if unnormalized := sorted(
+            name for name in {*groups, *(lock.dependency_groups or ())} if canonicalize_name(name) != name
+        ):
+            raise ValueError(f"dependency group names must be normalized: {', '.join(unnormalized)}")
         if args.project:
             if (args.project.parent / "nab.toml").exists():
                 raise ValueError("project nab.toml can override the reviewed index policy")
@@ -52,7 +56,7 @@ def main() -> None:
                 if "nab" in project.get("tool", {}):
                     validate_indexes(project["tool"]["nab"])
             if lock_provider(lock.tool) == "release-creator":
-                project_selections(args.project)
+                validate_workspace_sources(args.project)
         if (missing := groups - set(lock.dependency_groups or ())) and not (
             args.build_constraints and missing == {"build"}
         ):
@@ -75,9 +79,10 @@ def main() -> None:
 
 
 def _check_cooling(lock: Pylock, groups: set[str], *, local_tool_source: bool = False) -> None:
-    created = (
-        (lock.tool or {}).get("nab" if lock_provider(lock.tool) == "nab" else "release-creator", {}).get("created-at")
-    )
+    producer = (lock.tool or {}).get(lock_provider(lock.tool))
+    if not isinstance(producer, dict):
+        raise TypeError("lock producer settings must be a table")
+    created = producer.get("created-at")
     if not isinstance(created, datetime) or created.tzinfo is None or created > datetime.now(tz=UTC):
         raise ValueError("lock has no valid creation time or was created in the future")
     threshold = created - timedelta(days=7)
@@ -164,10 +169,6 @@ def _selected_packages(lock: Pylock, groups: set[str], *, local_tool_source: boo
             and package.directory is not None
             and package.directory.path == "."
             and package.index is None
-            and package.archive is None
-            and package.vcs is None
-            and package.sdist is None
-            and (package.wheels is None or len(package.wheels) == 0)
         ):
             continue
         yield package

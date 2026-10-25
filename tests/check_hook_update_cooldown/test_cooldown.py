@@ -9,38 +9,8 @@ from pathlib import Path
 from typing import Literal
 
 import pytest
-import yaml
 from conftest import action
 from pytest_httpserver import HTTPServer
-
-
-def test_action_uses_scoped_job_token() -> None:
-    action = yaml.safe_load((Path(__file__).resolve().parents[2] / "check-hook-update-cooldown/action.yml").read_text())
-    assert [step["env"]["GH_TOKEN"] for step in action["runs"]["steps"] if "GH_TOKEN" in step.get("env", {})] == [
-        "${{ github.token }}",
-        "${{ github.token }}",
-        "${{ github.token }}",
-        "${{ github.token }}",
-    ]
-    assert action["runs"]["steps"][0]["env"]["RELEASE_APP_CLIENT_ID"] == "${{ inputs.release-app-client-id }}"
-    workflow = yaml.safe_load((Path(__file__).resolve().parents[2] / ".github/workflows/check.yaml").read_text())
-    caller = workflow["jobs"]["hook-cooldown"]["steps"][0]
-    assert caller["with"]["release-app-client-id"] == "${{ vars.RELEASE_APP_CLIENT_ID }}"
-
-
-def test_action_checks_app_hook_closure_from_pull_request_head() -> None:
-    steps = yaml.safe_load((Path(__file__).resolve().parents[2] / "check-hook-update-cooldown/action.yml").read_text())[
-        "runs"
-    ]["steps"]
-    source = next(step for step in steps if step.get("name") == "Read the base and proposed hook configurations")
-    closure = next(step for step in steps if step.get("name") == "Verify managed hook dependency closure")
-
-    assert '"repos/$head_repository/contents/.pre-commit-config.yaml?ref=$HEAD_SHA"' in source["run"]
-    assert closure["if"] == "steps.identity.outputs.changed == 'true'"
-    assert 'cp "$RUNNER_TEMP/proposed-hooks.yaml" "$RUNNER_TEMP/hook-closure/.pre-commit-config.yaml"' in closure["run"]
-    assert "release-creator hooks" in closure["run"]
-    assert '--check --minimum-days "$MINIMUM_DAYS"' in closure["run"]
-    assert closure["env"]["MINIMUM_DAYS"] == "${{ inputs.minimum-days }}"
 
 
 @pytest.mark.parametrize(
@@ -332,6 +302,39 @@ def test_cooldown_checks_human_local_hook_dependencies(
     assert (tmp_path / "hook-closure/.pre-commit-config.yaml").read_text() == proposed
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        pytest.param("prek.toml", id="root-prek-toml"),
+        pytest.param("sub/prek.toml", id="nested-prek-toml"),
+        pytest.param(".pre-commit-config.yml", id="root-yml"),
+        pytest.param("sub/.pre-commit-config.yaml", id="nested-yaml"),
+        pytest.param("sub/.pre-commit-config.yml", id="nested-yml"),
+    ],
+)
+def test_cooldown_rejects_other_hook_configuration(
+    tmp_path: Path, action_scripts: Path, github_api: tuple[HTTPServer, dict[str, str]], path: str
+) -> None:
+    server, environment = github_api
+    expect_pull(server, author="gaborbernat", hook_update=False, other_files=(("added", path),))
+
+    result = run_cooldown(action_scripts, tmp_path, environment)
+
+    assert result.returncode != 0
+    assert f"only in the root .pre-commit-config.yaml: {path}" in result.stderr
+
+
+def test_cooldown_allows_removing_other_hook_configuration(
+    tmp_path: Path, action_scripts: Path, github_api: tuple[HTTPServer, dict[str, str]]
+) -> None:
+    server, environment = github_api
+    expect_pull(server, author="gaborbernat", hook_update=False, other_files=(("removed", "prek.toml"),))
+
+    result = run_cooldown(action_scripts, tmp_path, environment)
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_cooldown_skips_bot_without_hook_changes(
     tmp_path: Path, action_scripts: Path, github_api: tuple[HTTPServer, dict[str, str]]
 ) -> None:
@@ -455,6 +458,26 @@ def test_cooldown_accepts_managed_pin_with_python_marker(
 
 
 @pytest.mark.parametrize(
+    ("author", "client_id"),
+    [
+        pytest.param("gaborbernat", "Iv1.release", id="human-author"),
+        pytest.param("release-app[bot]", "", id="unconfigured-app"),
+    ],
+)
+def test_cooldown_requires_configured_app_on_updater_branch(
+    tmp_path: Path, action_scripts: Path, github_api: tuple[HTTPServer, dict[str, str]], author: str, client_id: str
+) -> None:
+    server, environment = github_api
+    expect_pull(server, author=author, branch="automation/update-release-tools")
+
+    result = run_cooldown(action_scripts, tmp_path, environment | {"RELEASE_APP_CLIENT_ID": client_id})
+
+    assert result.returncode != 0
+    assert "release tool branch requires the configured release App" in result.stderr
+    assert "/api/v3/apps/release-app" not in [request.path for request, _ in server.log]
+
+
+@pytest.mark.parametrize(
     ("client_id", "head_repository"),
     [
         pytest.param("Iv1.other", "tox-dev/fixture", id="another-app"),
@@ -527,6 +550,7 @@ def test_cooldown_rejects_invalid_minimum(
     server, environment = github_api
     result = run_cooldown(action_scripts, tmp_path, environment, minimum_days=minimum_days)
     assert result.returncode != 0
+    assert "minimum-days must be a whole number of at least seven" in result.stderr
     assert not server.log
 
 
@@ -742,6 +766,7 @@ def expect_pull(
     associated_pull_request: int | None = 7,
     observed_repository: str | None = None,
     workflow_path: str = ".github/workflows/check.yaml",
+    other_files: tuple[tuple[str, str], ...] = (),
 ) -> None:
     server.expect_request("/api/v3/repos/tox-dev/fixture/pulls/7", method="GET").respond_with_json(
         {
@@ -754,7 +779,10 @@ def expect_pull(
         }
     )
     server.expect_request("/api/v3/repos/tox-dev/fixture/pulls/7/files", method="GET").respond_with_json(
-        [{"filename": ".pre-commit-config.yaml" if hook_update else "pyproject.toml"}]
+        [
+            {"status": "modified", "filename": ".pre-commit-config.yaml" if hook_update else "pyproject.toml"},
+            *({"status": status, "filename": filename} for status, filename in other_files),
+        ]
     )
     if hook_update:
         if author.endswith("[bot]") and branch == "automation/update-release-tools":

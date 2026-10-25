@@ -13,7 +13,6 @@ _DURATION: Final = re.compile(
     """,
     re.VERBOSE,
 )
-_MINIMUM_DAYS: Final = 7
 
 _REVIEWED_VERSIONS: Final = {
     **{
@@ -43,7 +42,7 @@ def validate_recent_cutoffs(project: str, threshold: datetime) -> None:
     global_cutoff = nab.get("uploaded-prior-to")
     if not isinstance(global_cutoff, str) or (match := _DURATION.fullmatch(global_cutoff)) is None:
         raise ValueError("global Nab cutoff must be a duration of at least P7D")
-    if int(match["days"]) < _MINIMUM_DAYS:
+    if int(match["days"]) < 7:
         raise ValueError("global Nab cutoff must be a duration of at least P7D")
     candidates = [
         (name, settings["uploaded-prior-to"])
@@ -56,15 +55,12 @@ def validate_recent_cutoffs(project: str, threshold: datetime) -> None:
         if "uploaded-prior-to" in rule
         for name in rule["match"]
     )
-    for name, settings in nab.get("index", {}).items():
-        if "uploaded-prior-to" in settings:
-            raise ValueError(f"Nab index cutoff for {name} bypasses the seven-day policy")
     validate_indexes(nab)
     for name, value in candidates:
         if value is False:
             raise ValueError(f"Nab cutoff for {name} weakens the seven-day policy: {value}")
         if isinstance(value, str) and (match := _DURATION.fullmatch(value)) is not None:
-            if int(match["days"]) < _MINIMUM_DAYS:
+            if int(match["days"]) < 7:
                 raise ValueError(f"Nab cutoff for {name} weakens the seven-day policy: {value}")
             continue
         timestamp = _timestamp(name, value)

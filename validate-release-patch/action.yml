@@ -1,11 +1,8 @@
 name: Validate release patch
-description: Check and apply a prepared release patch, with optional release-tool validation
+description: Check and apply the release patch downloaded to $RUNNER_TEMP/release-patch, with optional release-tool validation
 inputs:
   version:
     description: Release version
-    required: true
-  patch:
-    description: Path to the downloaded patch
     required: true
   checks:
     description: Run release-creator and prek after applying the patch
@@ -25,7 +22,6 @@ runs:
     - name: Apply release patch
       shell: bash
       env:
-        PATCH: ${{ inputs.patch }}
         CHECKS: ${{ inputs.checks }}
       run: |
         set -euo pipefail
@@ -33,7 +29,7 @@ runs:
           echo '::error::checks must be true or false' >&2
           exit 1
         fi
-        git apply --index "$PATCH"
+        git apply --index "$RUNNER_TEMP/release-patch/release.patch"
     - id: config
       uses: $/read-towncrier-config
     - name: Check release patch paths
@@ -127,16 +123,8 @@ runs:
     - name: Run prek on release patch
       if: inputs.checks == 'true'
       shell: bash
-      env:
-        UV_EXCLUDE_NEWER: 7 days
-        UV_NO_CONFIG: "1"
-        UV_NO_SOURCES: "1"
       run: |
-        unset UV_CONFIG_FILE UV_INDEX UV_INDEX_URL UV_DEFAULT_INDEX UV_EXTRA_INDEX_URL
-        unset UV_FIND_LINKS UV_EXCLUDE_NEWER_PACKAGE
-        unset UV_INSECURE_HOST UV_SYSTEM_CERTS SSL_CERT_FILE SSL_CERT_DIR
-        set -euo pipefail
-        if ! prek run --all-files; then
+        if ! "$GITHUB_ACTION_PATH/../tools/cooled_prek.sh" run --all-files; then
           echo '::error::prek failed on the validated release patch' >&2
           exit 1
         fi

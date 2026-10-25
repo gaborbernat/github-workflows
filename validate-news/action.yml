@@ -49,7 +49,7 @@ runs:
         ADDITIONAL_LOCK: ${{ inputs.additional-lock }}
         KEEP_UV_LOCK: ${{ inputs.keep-uv-lock }}
       run: |
-        paths=(pyproject.toml ':(glob)**/pyproject.toml' pylock.toml nab.toml)
+        paths=(':(glob)**/pyproject.toml' pylock.toml nab.toml ':(glob).github/workflows/**')
         if [[ -n "$ADDITIONAL_LOCK" ]]; then paths+=("$ADDITIONAL_LOCK"); fi
         if [[ "$KEEP_UV_LOCK" == true ]]; then paths+=(uv.lock); fi
         changed=$(git diff --name-only "origin/$BASE_REF...HEAD" -- "${paths[@]}")
@@ -65,14 +65,11 @@ runs:
           echo 'changed=false' >>"$GITHUB_OUTPUT"
           exit 0
         fi
-        groups=$(python3 "$GITHUB_ACTION_PATH/../tools/lock_groups.py" pylock.toml)
         echo 'changed=true' >>"$GITHUB_OUTPUT"
-        echo "groups=$groups" >>"$GITHUB_OUTPUT"
     - name: Check the release lock against the project
       if: steps.lock-change.outputs.changed == 'true'
       uses: $/refresh-release-lock
       with:
-        lock-groups: ${{ steps.lock-change.outputs.groups }}
         additional-lock: ${{ inputs.additional-lock }}
         additional-lock-groups: ${{ inputs.additional-lock-groups }}
         additional-lock-selection: ${{ inputs.additional-lock-selection }}

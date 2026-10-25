@@ -10,76 +10,6 @@ import pytest
 import yaml
 
 
-def test_prepare_workflow_calls_reusable_preparation() -> None:
-    workflow = yaml.safe_load(
-        (Path(__file__).resolve().parents[2] / ".github/workflows/prepare-release.yaml").read_text()
-    )
-    assert list(workflow["jobs"]) == ["prepare"]
-    assert workflow["jobs"]["prepare"]["uses"] == "$/.github/workflows/prepare-towncrier-release.yaml"
-
-
-@pytest.mark.parametrize(
-    ("workflow", "job", "step_name"),
-    [
-        pytest.param("check.yaml", "check", "Check repository formatting", id="pull-request"),
-        pytest.param("release.yaml", "check", "Check tagged source", id="tagged-release"),
-        pytest.param("validate-python-release.yaml", "source-check", "Run tagged source checks", id="distribution"),
-        pytest.param("prepare-towncrier-release.yaml", "assemble", "Install prek hooks", id="prepare"),
-    ],
-)
-def test_release_hook_installation_has_cooldown(workflow: str, job: str, step_name: str) -> None:
-    document = yaml.safe_load((Path(__file__).resolve().parents[2] / ".github/workflows" / workflow).read_text())
-    step = next(item for item in document["jobs"][job]["steps"] if item.get("name") == step_name)
-    assert step["env"]["UV_EXCLUDE_NEWER"] == "7 days"
-
-
-def test_tagged_release_checks_the_committed_lock() -> None:
-    workflow = yaml.safe_load((Path(__file__).resolve().parents[2] / ".github/workflows/release.yaml").read_text())
-    check = workflow["jobs"]["check"]
-    assert next(step for step in check["steps"] if step.get("uses") == "$/refresh-release-lock")["with"] == {
-        "mode": "check"
-    }
-    assert "check" in workflow["jobs"]["publish"]["needs"]
-    assert check["permissions"] == {"actions": "read", "contents": "read", "pull-requests": "read"}
-    assert next(step for step in check["steps"] if "checkout" in step.get("uses", ""))["with"]["fetch-depth"] == 0
-
-
-def test_prepare_jobs_transfer_the_uploaded_patch() -> None:
-    workflow = yaml.safe_load(
-        (Path(__file__).resolve().parents[2] / ".github/workflows/prepare-towncrier-release.yaml").read_text()
-    )
-    jobs = workflow["jobs"]
-    assert list(jobs) == ["assemble", "validate", "push"]
-    assert jobs["assemble"]["outputs"]["artifact-id"] == "${{ steps.patch.outputs.artifact-id }}"
-    assert (
-        next(step for step in jobs["assemble"]["steps"] if step.get("id") == "patch")["with"]["name"] == "release-patch"
-    )
-    for job in ("validate", "push"):
-        assert (
-            next(step for step in jobs[job]["steps"] if "download-artifact" in step.get("uses", ""))["with"][
-                "artifact-ids"
-            ]
-            == "${{ needs.assemble.outputs.artifact-id }}"
-        )
-
-
-def test_prepare_validates_uploaded_patch_before_writer() -> None:
-    workflow = yaml.safe_load(
-        (Path(__file__).resolve().parents[2] / ".github/workflows/prepare-towncrier-release.yaml").read_text()
-    )
-    jobs = workflow["jobs"]
-    assert jobs["validate"]["permissions"] == {"contents": "read"}
-    assert jobs["validate"]["needs"] == "assemble"
-    assert jobs["push"]["needs"] == ["assemble", "validate"]
-    assert not any(step.get("uses") == "$/validate-release-patch" for step in jobs["assemble"]["steps"])
-    validation = next(step for step in jobs["validate"]["steps"] if step.get("uses") == "$/validate-release-patch")
-    assert validation["with"]["patch"] == "${{ runner.temp }}/release-patch/release.patch"
-    assert (
-        next(step for step in jobs["push"]["steps"] if step.get("uses") == "$/validate-release-patch")["with"]["checks"]
-        == "false"
-    )
-
-
 @pytest.mark.parametrize(
     ("version", "prefix", "accepted"),
     [
@@ -102,10 +32,28 @@ def test_prepare_validation_calculates_version_independently(
     if prefix:
         expected_arguments.extend(["--prefix", prefix])
     command.write_text(
-        f"#!{sys.executable}\nimport sys\nassert sys.argv[1:] == {expected_arguments!r}\nprint({f'{prefix}1.2.3'!r})\n"
+        f"#!{sys.executable}\nimport sys\nassert sys.argv[1:] == {expected_arguments!r}\n"
+        f"assert sys.stdin.read() == {f'{prefix}1.2.2' + chr(10)!r}\nprint({f'{prefix}1.2.3'!r})\n"
     )
     command.chmod(0o755)
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.org",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "x",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(["git", "tag", f"{prefix}1.2.2"], cwd=tmp_path, check=True)
 
     result = subprocess.run(
         ["bash", "-e", "-o", "pipefail", "-c", verify["run"]],
@@ -128,77 +76,47 @@ def test_prepare_validation_calculates_version_independently(
         assert "assembled release version differs from 1.2.3" in result.stderr
 
 
-@pytest.mark.parametrize("job", ["assemble", "validate"])
-def test_prepare_builds_local_tool_with_locked_backends(job: str) -> None:
-    workflow = yaml.safe_load(
-        (Path(__file__).resolve().parents[2] / ".github/workflows/prepare-towncrier-release.yaml").read_text()
+def test_local_release_creator_builds_with_locked_backends(tmp_path: Path) -> None:
+    step = yaml.safe_load(
+        (Path(__file__).resolve().parents[2] / "install-local-release-creator/action.yml").read_text()
+    )["runs"]["steps"][0]
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    (fake_bin / "uv").write_text(
+        '#!/bin/sh\necho "$@" >>"$RUNNER_TEMP/uv-calls"\n'
+        'if [ "$1" = build ]; then mkdir -p "$RUNNER_TEMP/local-tool-dist" && touch "$RUNNER_TEMP/local-tool-dist/x.whl"; fi\n'
+        f'if [ "$1" = run ]; then shift 4; shift; exec {sys.executable} "$@"; fi\n'
     )
-    steps = workflow["jobs"][job]["steps"]
-    builds = [step for step in steps if step.get("name") == "Build local release tool wheel"]
-    assert len(builds) == 1
-    assert builds[0]["env"]["BUILD_CONSTRAINTS"] == "${{ steps.tools.outputs.build-constraints }}"
-    assert '--build-constraints "$BUILD_CONSTRAINTS"' in builds[0]["run"]
-    assert "--require-build-hashes" in builds[0]["run"]
-    assert any(
-        step.get("name") == "Install local release tool wheel" and '"$RUNNER_TEMP/local-tool-dist/"*.whl' in step["run"]
-        for step in steps
-    )
-
-
-def test_prepare_exposes_local_command_without_shadowing_python(tmp_path: Path) -> None:
-    workflow = yaml.safe_load(
-        (Path(__file__).resolve().parents[2] / ".github/workflows/prepare-towncrier-release.yaml").read_text()
-    )
-    steps = workflow["jobs"]["assemble"]["steps"]
-    expose = next(step for step in steps if step.get("name") == "Expose local release command")
-    assert expose["if"] == "inputs.local-tool-source"
-    assert steps.index(expose) > next(
-        index for index, step in enumerate(steps) if step.get("name") == "Install local release tool wheel"
-    )
-    assert steps.index(expose) < next(index for index, step in enumerate(steps) if step.get("id") == "prepare")
+    (fake_bin / "uv").chmod(0o755)
     command = tmp_path / ".venv/bin/release-creator"
     command.parent.mkdir(parents=True)
     command.symlink_to(sys.executable)
     output = tmp_path / "github-path"
 
     result = subprocess.run(
-        ["bash", "-e", "-o", "pipefail", "-c", expose["run"]],
+        ["bash", "-e", "-o", "pipefail", "-c", step["run"]],
         cwd=tmp_path,
-        env={**os.environ, "GITHUB_WORKSPACE": str(tmp_path), "RUNNER_TEMP": str(tmp_path), "GITHUB_PATH": str(output)},
+        env=os.environ
+        | {
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "BUILD_CONSTRAINTS": "constraints.txt",
+            "GITHUB_WORKSPACE": str(tmp_path),
+            "RUNNER_TEMP": str(tmp_path),
+            "GITHUB_PATH": str(output),
+            "GITHUB_ACTION_PATH": str(Path(__file__).resolve().parents[2] / "install-local-release-creator"),
+        },
         capture_output=True,
         text=True,
         check=False,
     )
 
     assert result.returncode == 0, result.stderr
+    build, install, _ = (tmp_path / "uv-calls").read_text().splitlines()
+    assert "--build-constraints constraints.txt --require-build-hashes" in build
+    assert install.endswith(f"--no-deps {tmp_path}/local-tool-dist/x.whl")
     overlay = Path(output.read_text().strip())
+    assert [path.name for path in overlay.iterdir()] == ["release-creator"]
     assert (overlay / "release-creator").resolve() == command.resolve()
-    assert not (overlay / "python").exists()
-    assert (
-        subprocess.run([str(overlay / "release-creator"), "--version"], check=False, capture_output=True).returncode
-        == 0
-    )
-
-
-def test_prepare_installs_hooks_while_building_changelog() -> None:
-    workflow = yaml.safe_load(
-        (Path(__file__).resolve().parents[2] / ".github/workflows/prepare-towncrier-release.yaml").read_text()
-    )
-    steps = workflow["jobs"]["assemble"]["steps"]
-    hooks = next(step for step in steps if step.get("id") == "hooks")
-    build = next(step for step in steps if step.get("id") == "prepare")
-    wait = next(step for step in steps if step.get("wait") == "hooks")
-    finalize = next(step for step in steps if step.get("name") == "Finalize release patch")
-    assert hooks["background"] is True
-    assert hooks["run"].splitlines()[-1] == "prek install-hooks"
-    assert [build["with"]["phase"], finalize["with"]["phase"]] == ["build", "finalize"]
-    assert steps.index(hooks) < steps.index(build) < steps.index(wait) < steps.index(finalize)
-
-
-def test_changelog_checkout_fetches_the_base_branch() -> None:
-    workflow = yaml.safe_load((Path(__file__).resolve().parents[2] / ".github/workflows/news.yaml").read_text())
-    checkout = next(step for step in workflow["jobs"]["changelog"]["steps"] if "checkout" in step.get("uses", ""))
-    assert checkout["with"]["fetch-depth"] == 0
 
 
 def test_release_writer_has_only_notes_and_reconciler() -> None:
@@ -212,36 +130,6 @@ def test_release_writer_has_only_notes_and_reconciler() -> None:
     ]
     assert publish["steps"][-1]["with"]["commit"] == "${{ needs.source.outputs.commit }}"
     assert publish["steps"][0]["with"]["artifact-ids"] == "${{ needs.notes.outputs.artifact-id }}"
-
-
-def test_release_notes_run_without_write_access() -> None:
-    workflow = yaml.safe_load((Path(__file__).resolve().parents[2] / ".github/workflows/release.yaml").read_text())
-    notes = workflow["jobs"]["notes"]
-    assert notes["permissions"] == {"contents": "read"}
-    assert notes["steps"][0]["with"]["fetch-depth"] == 1
-    assert "$/render-release-notes" in [step.get("uses") for step in notes["steps"]]
-    assert notes["outputs"]["artifact-id"] == "${{ steps.artifact.outputs.artifact-id }}"
-    assert (
-        next(step for step in notes["steps"] if "download-artifact" in step.get("uses", ""))["with"]["artifact-ids"]
-        == "${{ needs.contributors.outputs.artifact-id }}"
-    )
-
-
-def test_release_contributors_job_has_no_checkout() -> None:
-    workflow = yaml.safe_load((Path(__file__).resolve().parents[2] / ".github/workflows/release.yaml").read_text())
-    contributors = workflow["jobs"]["contributors"]
-    assert contributors["permissions"] == {"contents": "write"}
-    assert not any("checkout" in step.get("uses", "") for step in contributors["steps"])
-    assert not any("setup-uv" in step.get("uses", "") for step in contributors["steps"])
-
-
-def test_release_contributors_job_uploads_generated_notes() -> None:
-    workflow = yaml.safe_load((Path(__file__).resolve().parents[2] / ".github/workflows/release.yaml").read_text())
-    contributors = workflow["jobs"]["contributors"]
-    assert contributors["steps"][0]["name"] == "Fetch contributor metadata"
-    assert "releases/generate-notes" in contributors["steps"][0]["run"]
-    assert contributors["steps"][1]["with"]["path"] == "${{ runner.temp }}/generated-notes.md"
-    assert contributors["outputs"]["artifact-id"] == "${{ steps.artifact.outputs.artifact-id }}"
 
 
 def test_shfmt_hook_rejects_unformatted_inline_shell(tmp_path: Path) -> None:

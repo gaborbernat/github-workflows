@@ -48,79 +48,6 @@ def lock_repository(tmp_path: Path) -> Path:
     return repository
 
 
-def test_upgrade_locks_only_selected_groups(lock_repository: Path, tmp_path: Path, upgrade_scripts: Path) -> None:
-    project = lock_repository / "pyproject.toml"
-    project.write_text(project.read_text().replace("release = []", 'release-check = ["prek>=0.2"]'))
-    installed = action(
-        lock_repository,
-        tmp_path,
-        upgrade_scripts,
-        "install-locked-tools",
-        version="",
-        GROUPS="lock-tools",
-        LOCK_SOURCE="shared",
-        VENV=str(tmp_path / "lock-tools"),
-    )
-    assert installed.returncode == 0, installed.stderr
-    resolved = execute(
-        lock_repository,
-        refresh_script(upgrade_scripts, "Resolve selected Nab groups"),
-        tmp_path,
-        LOCK_GROUPS="release-check",
-        MODE="refresh",
-    )
-    assert resolved.returncode == 0, resolved.stderr
-    lock = tomllib.loads((lock_repository / "pylock.toml").read_text())
-    assert lock["dependency-groups"] == ["project-runtime", "release-check"]
-    assert "test" not in {package["name"] for package in lock["packages"]}
-
-
-def test_upgrade_check_mode_preserves_lock_bytes(lock_repository: Path, tmp_path: Path, upgrade_scripts: Path) -> None:
-    project = lock_repository / "pyproject.toml"
-    project.write_text(
-        project.read_text().replace("release = []", 'release-check = ["prek>=0.2"]')
-        + '[tool.nab.packages.old]\nuploaded-prior-to = "2020-01-01T00:00:00Z"\n'
-    )
-    installed = action(
-        lock_repository,
-        tmp_path,
-        upgrade_scripts,
-        "install-locked-tools",
-        version="",
-        GROUPS="lock-tools",
-        LOCK_SOURCE="shared",
-        VENV=str(tmp_path / "lock-tools"),
-    )
-    assert installed.returncode == 0, installed.stderr
-    refreshed = execute(
-        lock_repository,
-        refresh_script(upgrade_scripts, "Resolve selected Nab groups"),
-        tmp_path,
-        LOCK_GROUPS="release-check",
-        MODE="refresh",
-    )
-    assert refreshed.returncode == 0, refreshed.stderr
-    expected = (lock_repository / "pylock.toml").read_bytes()
-    project_bytes = project.read_bytes()
-    run(lock_repository, "git", "add", ".")
-    run(lock_repository, "git", "commit", "-m", "Record lock")
-    (lock_repository / "pylock.toml").write_bytes(expected.replace(b'"release-check"', b'"release-news"', 1))
-    stale = (lock_repository / "pylock.toml").read_bytes()
-    checked = action(
-        lock_repository,
-        tmp_path,
-        upgrade_scripts,
-        "refresh-release-lock",
-        version="",
-        LOCK_GROUPS="release-check",
-        MODE="check",
-    )
-    assert checked.returncode != 0
-    assert "regenerated Nab lock differs" in checked.stderr
-    assert (lock_repository / "pylock.toml").read_bytes() != stale
-    assert project.read_bytes() == project_bytes
-
-
 def test_upgrade_preserves_deliberate_nab_hold(lock_repository: Path, tmp_path: Path, upgrade_scripts: Path) -> None:
     project = lock_repository / "pyproject.toml"
     project.write_text(
@@ -308,25 +235,6 @@ def test_upgrade_combines_lock_and_hook_patches(lock_repository: Path, tmp_path:
         ".pre-commit-config.yaml",
         "pylock.toml",
     ]
-
-
-@pytest.mark.parametrize("kind", ["lock", "hooks"], ids=["lock", "hooks"])
-def test_upgrade_downloads_the_generated_patch(kind: str) -> None:
-    workflow = yaml.safe_load(
-        (Path(__file__).resolve().parents[2] / ".github/workflows/upgrade-release-tools.yaml").read_text()
-    )
-    generator = workflow["jobs"][f"generate-{kind}"]
-    download = next(
-        step
-        for step in workflow["jobs"]["publish"]["steps"]
-        if step.get("with", {}).get("path") == f"${{{{ runner.temp }}}}/release-tools-{kind}"
-    )
-
-    assert generator["outputs"]["artifact-id"] == "${{ steps.upload.outputs.artifact-id }}"
-    assert next(step for step in generator["steps"] if step.get("id") == "upload")["with"]["name"] == (
-        f"release-tools-{kind}"
-    )
-    assert download["with"]["artifact-ids"] == f"${{{{ needs.generate-{kind}.outputs.artifact-id }}}}"
 
 
 def test_upgrade_preserves_requested_pull_request_body(

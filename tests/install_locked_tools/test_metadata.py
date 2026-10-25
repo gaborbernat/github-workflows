@@ -82,7 +82,9 @@ def pypi_listing() -> _PyPIListing:
 def test_lock_metadata_matches_pypi(
     lock_case: tuple[Path, Path], pypi_listing: _PyPIListing, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    request = mocker.patch("urllib.request.urlopen", return_value=BytesIO(json.dumps(pypi_listing).encode()))
+    request = mocker.patch(
+        "urllib.request.urlopen", autospec=True, return_value=BytesIO(json.dumps(pypi_listing).encode())
+    )
     context = mocker.patch.object(ssl, "create_default_context", autospec=True)
 
     _run_check(lock_case, monkeypatch, "--verify-pypi", "--project", str(lock_case[1]))
@@ -184,7 +186,7 @@ def test_lock_metadata_stops_after_five_network_errors(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    request = mocker.patch("urllib.request.urlopen", side_effect=URLError("handshake timed out"))
+    request = mocker.patch("urllib.request.urlopen", autospec=True, side_effect=URLError("handshake timed out"))
     mocker.patch("time.sleep")
 
     with pytest.raises(SystemExit, match="2"):
@@ -290,7 +292,7 @@ def test_lock_metadata_rejects_invalid_listing(
         pypi_listing["meta"]["api-version"] = "2.0"
     else:
         pypi_listing["name"] = "other"
-    mocker.patch("urllib.request.urlopen", return_value=BytesIO(json.dumps(pypi_listing).encode()))
+    mocker.patch("urllib.request.urlopen", autospec=True, return_value=BytesIO(json.dumps(pypi_listing).encode()))
 
     with pytest.raises(SystemExit, match="2"):
         _run_check(lock_case, monkeypatch, "--verify-pypi", "--project", str(lock_case[1]))
@@ -313,7 +315,7 @@ def test_lock_metadata_rejects_non_object_listing(
     capsys: pytest.CaptureFixture[str],
     listing: object,
 ) -> None:
-    mocker.patch("urllib.request.urlopen", return_value=BytesIO(json.dumps(listing).encode()))
+    mocker.patch("urllib.request.urlopen", autospec=True, return_value=BytesIO(json.dumps(listing).encode()))
 
     with pytest.raises(SystemExit, match="2"):
         _run_check(lock_case, monkeypatch, "--verify-pypi", "--project", str(lock_case[1]))
@@ -332,6 +334,30 @@ def test_lock_metadata_allows_local_release_creator(
     )
 
     _run_check(lock_case, monkeypatch, "--local-tool-source", "--verify-pypi", "--project", str(lock_case[1]))
+
+
+@pytest.mark.parametrize(
+    ("name", "path"),
+    [pytest.param("release-creator", "../other", id="other-directory"), pytest.param("six", ".", id="other-package")],
+)
+def test_lock_metadata_limits_local_tool_exemption(
+    lock_case: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    name: str,
+    path: str,
+) -> None:
+    lock = lock_case[0]
+    lock.write_text(
+        lock.read_text().split("[[packages]]", 1)[0]
+        + f'[[packages]]\nname = "{name}"\nmarker = \'"release-check" in dependency_groups\'\n'
+        + f'directory = {{ path = "{path}" }}\n'
+    )
+
+    with pytest.raises(SystemExit, match="2"):
+        _run_check(lock_case, monkeypatch, "--local-tool-source")
+
+    assert "direct-source package" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
@@ -523,6 +549,51 @@ def test_lock_metadata_rejects_unapproved_indexes(
         _run_check(lock_case, monkeypatch, "--project", str(project))
 
     assert "index" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("change", "group"),
+    [
+        pytest.param("lock", "release-check", id="lock-group"),
+        pytest.param("argument", "Release-Check", id="selected-group"),
+    ],
+)
+def test_lock_metadata_rejects_unnormalized_group(
+    lock_case: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    change: str,
+    group: str,
+) -> None:
+    lock = lock_case[0]
+    if change == "lock":
+        lock.write_text(
+            lock.read_text().replace(
+                'dependency-groups = ["release-check"]', 'dependency-groups = ["release-check", "project_runtime"]'
+            )
+        )
+    source = Path(__file__).resolve().parents[2]
+    monkeypatch.syspath_prepend(str(source / "tools"))
+    monkeypatch.setattr(sys, "argv", ["check_lock_groups.py", str(lock), group])
+
+    with pytest.raises(SystemExit, match="2"):
+        runpy.run_path(str(source / "tools/check_lock_groups.py"), run_name="__main__")
+
+    assert "dependency group names must be normalized" in capsys.readouterr().err
+
+
+def test_lock_metadata_rejects_non_table_producer(
+    lock_case: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    lock = lock_case[0]
+    lock.write_text(
+        lock.read_text().replace("[tool.nab]\ncreated-at = 2026-10-20T00:00:00Z\n", '[tool]\nnab = "oops"\n')
+    )
+
+    with pytest.raises(SystemExit, match="2"):
+        _run_check(lock_case, monkeypatch)
+
+    assert "lock producer settings must be a table" in capsys.readouterr().err
 
 
 def _run_check(lock_case: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch, *options: str) -> None:

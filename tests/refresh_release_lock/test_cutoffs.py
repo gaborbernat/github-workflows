@@ -168,6 +168,7 @@ def test_uv_resolver_cutoff_requires_review(cutoff: str, accepted: bool) -> None
     ("project_text", "accepted"),
     [
         pytest.param("[tool.release-creator.locks]\n", True, id="release-creator-only"),
+        pytest.param('[tool.nab]\nuploaded-prior-to = "P7D"\n', True, id="secondary-nab-only"),
         pytest.param("[tool.other]\n", False, id="no-policy"),
     ],
 )
@@ -598,7 +599,7 @@ def test_recent_cutoff_rejects_index_override() -> None:
         "[tool.nab.index.pypi]\nuploaded-prior-to = false\n"
     )
     assert result.returncode != 0
-    assert "Nab index cutoff for pypi" in result.stderr
+    assert "custom Nab indexes are not approved" in result.stderr
 
 
 def test_recent_cutoff_rejects_custom_index() -> None:

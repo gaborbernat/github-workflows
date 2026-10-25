@@ -46,24 +46,89 @@ def test_resolver_upgrade_rejects_invalid_state(
     assert error in result.stderr
 
 
+def test_resolver_widen_starts_at_the_current_pin(tmp_path: Path) -> None:
+    project = tmp_path / "pyproject.toml"
+    project.write_text('[dependency-groups]\nrelease-resolver = ["uv==0.13.6"]\n')
+    lock = tmp_path / "pylock.toml"
+    lock.write_text('dependency-groups = ["release-resolver"]\n' + _uv_package("0.13.6"))
+
+    result = _resolver(tmp_path, "widen")
+
+    assert result.returncode == 0, result.stderr
+    assert tomllib.loads(project.read_text())["dependency-groups"]["release-resolver"] == ["uv>=0.13.6"]
+
+
+def test_resolver_pin_ignores_uv_from_other_groups(tmp_path: Path) -> None:
+    project = tmp_path / "pyproject.toml"
+    project.write_text('[dependency-groups]\nrelease-resolver = ["uv>=0.13.5"]\n')
+    lock = tmp_path / "pylock.toml"
+    lock.write_text(
+        'dependency-groups = ["release-resolver", "test"]\n'
+        + _uv_package("0.13.6")
+        + "[[packages]]\nname = 'uv'\nversion = '0.14.0'\nmarker = '\"test\" in dependency_groups'\n"
+    )
+
+    result = _resolver(tmp_path, "pin")
+
+    assert result.returncode == 0, result.stderr
+    assert tomllib.loads(project.read_text())["dependency-groups"]["release-resolver"] == ["uv==0.13.6"]
+
+
+def _resolver(root: Path, mode: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).resolve().parents[2] / "tools/refresh_uv_resolver.py"),
+            mode,
+            str(root / "pyproject.toml"),
+            str(root / "pylock.toml"),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+@pytest.mark.parametrize(
+    ("repository", "pin", "locked", "accepted"),
+    [
+        pytest.param("tox-dev/github-workflows", "uv==0.13.6", "0.13.6", True, id="shared-resolver"),
+        pytest.param("tox-dev/github-workflows", "uv==0.13.6", "0.13.5", False, id="lock-mismatch"),
+        pytest.param("tox-dev/github-workflows", "uv>=0.13.6", "0.13.6", False, id="range"),
+        pytest.param("tox-dev/other", "uv==0.13.6", "0.13.6", False, id="other-repository"),
+    ],
+)
+def test_writer_accepts_only_the_locked_resolver_pin(
+    tmp_path: Path, repository: str, pin: str, locked: str, accepted: bool
+) -> None:
+    project = tmp_path / "pyproject.toml"
+    project.write_text('[dependency-groups]\nrelease-resolver = ["uv==0.13.5"]\n[tool.release-creator.locks]\n')
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "pyproject.toml"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "Pin"],
+        cwd=tmp_path,
+        check=True,
+    )
+    project.write_text(project.read_text().replace("uv==0.13.5", pin))
+    (tmp_path / "pylock.toml").write_text('dependency-groups = ["release-resolver"]\n' + _uv_package(locked))
+
+    result = subprocess.run(
+        [sys.executable, str(Path(__file__).resolve().parents[2] / "tools/verify_cutoff_patch.py")],
+        cwd=tmp_path,
+        env=os.environ | {"GITHUB_REPOSITORY": repository},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert (result.returncode == 0) is accepted, result.stderr
+
+
 def test_resolver_upgrade_import_has_no_side_effect() -> None:
     source = Path(__file__).resolve().parents[2] / "tools/refresh_uv_resolver.py"
 
     assert runpy.run_path(str(source), run_name="imported")["__all__"] == ["main"]
-
-
-def test_weekly_resolver_upgrade_is_opt_in() -> None:
-    source = Path(__file__).resolve().parents[2]
-    caller = yaml.safe_load((source / ".github/workflows/update-tools.yaml").read_text())
-    reusable = yaml.safe_load((source / ".github/workflows/upgrade-release-tools.yaml").read_text())
-    action = yaml.safe_load((source / "refresh-release-lock/action.yml").read_text())
-
-    assert caller["jobs"]["update"]["with"]["upgrade-resolver"] is True
-    refresh = next(
-        step for step in reusable["jobs"]["generate-lock"]["steps"] if step.get("uses") == "$/refresh-release-lock"
-    )
-    assert refresh["with"]["upgrade-resolver"] == "${{ inputs.upgrade-resolver }}"
-    assert action["inputs"]["upgrade-resolver"]["default"] == "false"
 
 
 def test_resolver_upgrade_uses_candidate_to_regenerate_lock(tmp_path: Path, action_scripts: Path) -> None:

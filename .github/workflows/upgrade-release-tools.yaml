@@ -2,10 +2,6 @@ name: Upgrade release tools
 on:
   workflow_call:
     inputs:
-      lock-groups:
-        description: Legacy Nab dependency groups; ignored for full project locks
-        default: ""
-        type: string
       additional-lock:
         description: Optional secondary pylock basename for a separate build matrix
         type: string
@@ -30,10 +26,6 @@ on:
         description: Space-separated implementations for the secondary lock
         type: string
         default: ""
-      upgrade-resolver:
-        description: Upgrade this repository's exact shared uv resolver pin with its lock
-        type: boolean
-        default: false
       keep-uv-lock:
         description: Refresh and check uv.lock alongside pylock.toml
         type: boolean
@@ -77,14 +69,12 @@ jobs:
       - id: lock
         uses: $/refresh-release-lock
         with:
-          lock-groups: ${{ inputs.lock-groups }}
           additional-lock: ${{ inputs.additional-lock }}
           additional-lock-groups: ${{ inputs.additional-lock-groups }}
           additional-lock-selection: ${{ inputs.additional-lock-selection }}
           additional-matrix-python: ${{ inputs.additional-matrix-python }}
           additional-matrix-platforms: ${{ inputs.additional-matrix-platforms }}
           additional-matrix-implementations: ${{ inputs.additional-matrix-implementations }}
-          upgrade-resolver: ${{ inputs.upgrade-resolver }}
           keep-uv-lock: ${{ inputs.keep-uv-lock }}
       - id: upload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -219,7 +209,7 @@ jobs:
               exit 1
             fi
           done <"$RUNNER_TEMP/dependency-modes"
-      - uses: $/verify-nab-cutoff-patch
+      - uses: $/verify-cutoff-patch
       - name: Commit refreshed tools
         env:
           COMMIT_MESSAGE: ${{ inputs.commit-message }}
