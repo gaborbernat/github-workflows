@@ -76,9 +76,11 @@ caller's `pylock.toml`.
 
 `nab-git-commit` is a temporary input of `refresh-release-lock`, `validate-news`, `check-tagged-source`,
 `prepare-towncrier-release.yaml`, `upgrade-release-tools.yaml`, and `validate-python-release.yaml`. It is empty by
-default. When set, it must be a full 40-character commit SHA, and Nab is installed from
-`git+https://github.com/notatallshaw/nab@<sha>` instead of the release. That commit gets no cooldown: `exclude-newer`
-applies only to its dependencies. It exists until a Nab release carries the needed fix and will be removed then.
+default. When set, it must be a full 40-character commit SHA, and the whole Nab workspace is installed from
+`git+https://github.com/notatallshaw/nab@<sha>` instead of the release: `nab` from the root, and `nab-index`,
+`nab-markersets`, `nab-project`, `nab-provider`, and `nab-resolver` from their `#subdirectory=` paths, because the root
+pins them to an unreleased version. That commit gets no cooldown: `exclude-newer` applies only to its dependencies. It
+exists until a Nab release carries the needed fix and will be removed then.
 
 ## Check pull request news
 
@@ -178,10 +180,12 @@ configurations, which no guard checks. `prepare-towncrier` and `validate-release
 anywhere, a `.pre-commit-config.yml`, and a `.pre-commit-config.yaml` below the root before they run `prek`.
 
 The shared prepare and tagged validator run `refresh-release-lock` in `check` mode before release checks or publishing.
-`check-tagged-source` bundles the tagged checks for a custom tag publisher: it requires `GITHUB_REF` to be the tag of
-the checkout on `main` and checks the locks. It runs no hooks. It takes the secondary lock inputs below and needs a
-full-history checkout. For a secondary Nab lock, pass its path, selected groups, selection type, and matrix inputs to
-both workflows. A stale primary or secondary lock stops the release before artifacts are built.
+`check-tagged-source` bundles the tagged checks for a custom tag publisher: on a tag ref it requires the tag to name
+both `GITHUB_SHA` and the checkout, on `main`, and checks the locks. Any other event, such as a `workflow_dispatch` from
+`main` with a `tag` input, must check out the commit that `inputs.tag` names, on `main`. It runs no hooks. It takes the
+secondary lock inputs below and needs a full-history checkout. For a secondary Nab lock, pass its path, selected groups,
+selection type, and matrix inputs to both workflows. A stale primary or secondary lock stops the release before
+artifacts are built.
 
 For example, a tagged source job that also publishes from a PGO lock checks both files before installing build tools:
 
