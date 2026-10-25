@@ -2,6 +2,102 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-4-0-0"></a>
+
+## 4.0.0 (2026-10-25)
+
+<a name="release-4-0-0-added"></a>
+
+### Added
+
+- Add `check-tagged-source`, which runs the tag, lock, frozen hook, and cooled `prek` checks of a tagged checkout. The
+  Python release workflow uses it, and custom tag release jobs can call it before publishing
+  ([#18](https://github.com/tox-dev/github-workflows/pull/18)) by [@gaborbernat](https://github.com/gaborbernat).
+
+<a name="release-4-0-0-fixed"></a>
+
+### Fixed
+
+- Check the release lock in pull requests that change a workflow, since re-pinning github-workflows can change the
+  pinned resolver and the rendered lock ([#18](https://github.com/tox-dev/github-workflows/pull/18)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Keep CRLF line endings when refreshing a mise pin, and report a release asset without a digest as an error instead of
+  a traceback ([#18](https://github.com/tox-dev/github-workflows/pull/18)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Let a JetBrains Marketplace retry follow an attempt that reconciled an earlier upload. That attempt now keeps a copy
+  of the receipt it verified, and the check reads the artifacts of the run named in the receipt. Fork pull request runs
+  on a branch named like the tag no longer block the upload ([#18](https://github.com/tox-dev/github-workflows/pull/18))
+  by [@gaborbernat](https://github.com/gaborbernat).
+- Let a human pull request add or change managed hook dependency pins when each new pin is an exact, cooled PyPI release
+  and the complete closure check passes. Adding a Python hook with dependencies no longer needs the release App
+  ([#18](https://github.com/tox-dev/github-workflows/pull/18)) by [@gaborbernat](https://github.com/gaborbernat).
+- Let the weekly github-workflows update publish a new uv resolver. The writer now accepts a change of the exact
+  `release-resolver` uv pin when the refreshed lock selects that version
+  ([#18](https://github.com/tox-dev/github-workflows/pull/18)) by [@gaborbernat](https://github.com/gaborbernat).
+- Report a lock whose `tool.release-creator` or `tool.nab` value is not a table as an error instead of a traceback
+  ([#18](https://github.com/tox-dev/github-workflows/pull/18)) by [@gaborbernat](https://github.com/gaborbernat).
+- Rerun a waiting hook cooldown check once any head of the pull request branch was observed seven days ago. The check
+  accepts revisions seen on earlier heads, so a later push no longer delays the rerun
+  ([#18](https://github.com/tox-dev/github-workflows/pull/18)) by [@gaborbernat](https://github.com/gaborbernat).
+- Select the new uv resolver only from the `release-resolver` group, so a different uv in the test group no longer stops
+  the upgrade, and widen the pin from its current version ([#18](https://github.com/tox-dev/github-workflows/pull/18))
+  by [@gaborbernat](https://github.com/gaborbernat).
+
+<a name="release-4-0-0-breaking-changes"></a>
+
+### Breaking changes
+
+- Remove the Nab primary lock path and the `lock-groups` input of `refresh-release-lock` and `upgrade-release-tools`.
+  `pylock.toml` must now come from `release-creator locks`; relock a Nab primary lock before re-pinning. Nab remains for
+  secondary `additional-lock` matrices ([#18](https://github.com/tox-dev/github-workflows/pull/18)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Remove the `render-release-notes` `output` input. Every caller passed `${{ runner.temp }}/release-notes.md`, which is
+  now where the Action writes the body ([#18](https://github.com/tox-dev/github-workflows/pull/18)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Remove the `upgrade-resolver` input of `refresh-release-lock` and `upgrade-release-tools`. The shared uv resolver pin
+  is upgraded only in github-workflows, which the Action now detects from the repository name
+  ([#18](https://github.com/tox-dev/github-workflows/pull/18)) by [@gaborbernat](https://github.com/gaborbernat).
+- Remove the `validate-release-patch` `patch` input. The Action reads the patch from
+  `${{ runner.temp }}/release-patch/release.patch`, where every caller downloaded it
+  ([#18](https://github.com/tox-dev/github-workflows/pull/18)) by [@gaborbernat](https://github.com/gaborbernat).
+- Rename the `verify-nab-cutoff-patch` Action to `verify-cutoff-patch`, since it checks release-creator cutoffs and the
+  shared resolver pin as well as Nab cutoffs ([#18](https://github.com/tox-dev/github-workflows/pull/18)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+
+<a name="release-4-0-0-security"></a>
+
+### Security
+
+- Check that the release tag points at the checkout and is on `main` before the tagged source check runs hooks
+  ([#18](https://github.com/tox-dev/github-workflows/pull/18)) by [@gaborbernat](https://github.com/gaborbernat).
+- Check the downloaded mise executable against the seven-day-old release digest before mise-action runs it, and run its
+  version listing outside the caller's checkout ([#18](https://github.com/tox-dev/github-workflows/pull/18)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Prove the age of tagged hook revisions before `release-creator hooks --check` builds hook repositories, so build
+  backends from an unproven revision do not run first ([#18](https://github.com/tox-dev/github-workflows/pull/18)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Reject `additional_dependencies` on hooks whose configured `language` is not Python. Only Python hook dependencies get
+  exact, cooled pins, so a node or other hook would install them unpinned
+  ([#18](https://github.com/tox-dev/github-workflows/pull/18)) by [@gaborbernat](https://github.com/gaborbernat).
+- Reject dependency group names that are not normalized, in the lock and in the selected groups. A name such as
+  `project_runtime` matched no lock marker, so its packages skipped the cooling and PyPI checks
+  ([#18](https://github.com/tox-dev/github-workflows/pull/18)) by [@gaborbernat](https://github.com/gaborbernat).
+- Run every prek command with `--config .pre-commit-config.yaml`, and reject a `prek.toml`, a `.pre-commit-config.yml`,
+  or a nested `.pre-commit-config.yaml` in the hook cooldown and frozen hook checks. prek used to run those files
+  without any revision, cooldown, or dependency check ([#18](https://github.com/tox-dev/github-workflows/pull/18)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+
+<a name="release-4-0-0-performance"></a>
+
+### Performance
+
+- Install the Nab lock tools in `refresh-release-lock` only for a refresh or a secondary lock. Lock checks in pull
+  requests, release preparation, and tagged releases skip that install
+  ([#18](https://github.com/tox-dev/github-workflows/pull/18)) by [@gaborbernat](https://github.com/gaborbernat).
+- Skip the cooling check of github-workflows' own lock when installing shared tools, and the second PyPI check of a
+  secondary lock's build selection when `export-build-constraints` already verified that lock
+  ([#18](https://github.com/tox-dev/github-workflows/pull/18)) by [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-3-1-1"></a>
 
 ## 3.1.1 (2026-10-24)
