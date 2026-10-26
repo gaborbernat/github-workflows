@@ -2,6 +2,18 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-6-0-1"></a>
+
+## 6.0.1 (2026-10-26)
+
+<a name="release-6-0-1-fixed"></a>
+
+### Fixed
+
+- Check out the full history in the `validate-python-release` build job again, so version tools such as hatch-vcs and
+  setuptools-scm see the release tag. 6.0.0 built `0.1.dev1+g<sha>` instead of the tagged version
+  ([#25](https://github.com/tox-dev/github-workflows/pull/25)) by [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-6-0-0"></a>
 
 ## 6.0.0 (2026-10-26)
