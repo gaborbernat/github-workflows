@@ -2,6 +2,42 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-5-0-2"></a>
+
+## 5.0.2 (2026-10-26)
+
+<a name="release-5-0-2-fixed"></a>
+
+### Fixed
+
+- Make `refresh-release-lock` in `check` mode install the Nab version that the committed `pylock.toml` records in
+  `[tool.nab] nab-version`, and fail if the lock records none. A Nab release newer than that version rewrites the field,
+  so every committed lock failed the check until the weekly refresh. `refresh` mode still installs the newest Nab under
+  the cutoff, and `nab-git-commit` still installs from that commit in both modes
+  ([#22](https://github.com/tox-dev/github-workflows/pull/22)) by [@gaborbernat](https://github.com/gaborbernat).
+- Make `validate-news` reject a pull request that removes `pylock.toml` when the project has a `nab.toml`, as it already
+  did for a `[tool.nab]` table in `pyproject.toml` ([#22](https://github.com/tox-dev/github-workflows/pull/22)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+
+<a name="release-5-0-2-documentation"></a>
+
+### Documentation
+
+- Say that `check-tagged-source` reads the tag of a non-tag run from the `tag` input of the `workflow_dispatch` event,
+  `github.event.inputs.tag`, rather than from an input of the Action
+  ([#22](https://github.com/tox-dev/github-workflows/pull/22)) by [@gaborbernat](https://github.com/gaborbernat).
+
+<a name="release-5-0-2-security"></a>
+
+### Security
+
+- Make the Actions install their own tools, such as Nab, `packaging`, `certifi`, and `pypi-attestations`, from PyPI even
+  when the caller's repository or environment configures another index. The installer now ignores `uv.toml`, `[tool.uv]`
+  in `pyproject.toml`, and the `UV_INDEX`, `UV_INDEX_URL`, `UV_DEFAULT_INDEX`, `UV_EXTRA_INDEX_URL`, `UV_FIND_LINKS`,
+  `UV_CONFIG_FILE`, `UV_INSECURE_HOST`, `UV_SYSTEM_CERTS`, `SSL_CERT_FILE`, and `SSL_CERT_DIR` variables, as
+  `cooled-prek` already does ([#22](https://github.com/tox-dev/github-workflows/pull/22)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-5-0-1"></a>
 
 ## 5.0.1 (2026-10-25)
