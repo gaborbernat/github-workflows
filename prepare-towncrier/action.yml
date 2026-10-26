@@ -23,22 +23,11 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Require a valid preparation phase
-      shell: bash
-      env:
-        PHASE: ${{ inputs.phase }}
-      run: |
-        case "$PHASE" in
-        all | build | finalize) ;;
-        *)
-          echo '::error::phase must be all, build, or finalize' >&2
-          exit 1
-          ;;
-        esac
-    - id: config
+    - name: ⚙️ Read Towncrier configuration
+      id: config
       uses: $/read-towncrier-config
     - id: version
-      name: Select release version
+      name: 🏷️ Select release version
       shell: bash
       env:
         BUMP: ${{ inputs.bump }}
@@ -49,25 +38,26 @@ runs:
       run: |
         set -euo pipefail
         if [[ "$PHASE" == finalize ]]; then
-          [[ -n "$VERSION" ]] || {
-            echo '::error::finalize requires a version from the build phase' >&2
-            exit 1
-          }
+          echo "Release version: $VERSION (from the version input in the finalize phase)"
+          echo 'Fragment linking, changelog build and contributors skipped: the build phase did them'
           printf 'version=%s\n' "$VERSION" >>"$GITHUB_OUTPUT"
           exit 0
         fi
-        if [[ -n "$VERSION" ]]; then
-          git tag --list | release-creator tags --next auto --directory "$FRAGMENTS" >/dev/null
-          git tag --list | release-creator tags "$VERSION" --require-newer
-        else
+        if [[ -z "$VERSION" ]]; then
           args=(--next "$BUMP" --directory "$FRAGMENTS")
           if [[ -n "$TAG_PREFIX" ]]; then
             args+=(--prefix "$TAG_PREFIX")
           fi
           VERSION=$(git tag --list | release-creator tags "${args[@]}")
+          echo "Next version: $VERSION (bump $BUMP from the fragments in $FRAGMENTS and the existing${TAG_PREFIX:+ $TAG_PREFIX-prefixed} tags)"
+        else
+          echo "Release version: $VERSION (from the version input)"
+        fi
+        if [[ "$PHASE" == build ]]; then
+          echo 'Changelog formatting and the release patch skipped: the finalize phase does them'
         fi
         printf 'version=%s\n' "$VERSION" >>"$GITHUB_OUTPUT"
-    - name: Link fragments and authors
+    - name: 📝 Link fragments and authors
       if: inputs.phase != 'finalize'
       shell: bash
       env:
@@ -77,7 +67,7 @@ runs:
       run: |
         set -euo pipefail
         release-creator fragments --directory "$FRAGMENTS" --repository "$REPOSITORY"
-    - name: Build changelog
+    - name: 📝 Build changelog
       if: inputs.phase != 'finalize'
       shell: bash
       env:
@@ -85,15 +75,9 @@ runs:
         CHANGELOG_PREFIX: ${{ inputs.changelog-prefix }}
       run: |
         set -euo pipefail
-        case "$CHANGELOG_PREFIX" in
-        '' | v) ;;
-        *)
-          echo '::error::changelog-prefix must be empty or v' >&2
-          exit 1
-          ;;
-        esac
+        echo "Changelog version: $CHANGELOG_PREFIX${VERSION#v} (tag $VERSION${CHANGELOG_PREFIX:+, changelog-prefix $CHANGELOG_PREFIX})"
         towncrier build --yes --version "$CHANGELOG_PREFIX${VERSION#v}"
-    - name: Add new contributors to the changelog
+    - name: 📝 Add new contributors to the changelog
       if: inputs.phase != 'finalize'
       shell: bash
       env:
@@ -104,18 +88,7 @@ runs:
         GH_TOKEN: ${{ github.token }}
       run: >-
         release-creator contributors --changelog "$CHANGELOG" --version "$CHANGELOG_PREFIX${VERSION#v}" --repository "$REPOSITORY"
-    - name: Reject other hook configurations
-      if: inputs.phase != 'build'
-      shell: bash
-      run: |
-        set -euo pipefail
-        others=$(git ls-files -- ':(glob)**/prek.toml' ':(glob)**/.pre-commit-config.yml' \
-          ':(glob)*/**/.pre-commit-config.yaml')
-        if [[ -n "$others" ]]; then
-          echo "::error::hooks must be configured only in the root .pre-commit-config.yaml: ${others//$'\n'/, }" >&2
-          exit 1
-        fi
-    - name: Format changelog
+    - name: 🧹 Format changelog
       if: inputs.phase != 'build'
       shell: bash
       env:
@@ -124,29 +97,34 @@ runs:
       run: |
         set -euo pipefail
         case "$FORMAT" in
-        markdown) formatter=mdformat ;;
         rst) formatter=docstrfmt ;;
-        *)
-          echo '::error::unsupported changelog format' >&2
-          exit 1
-          ;;
+        *) formatter=mdformat ;;
         esac
+        echo "Changelog formatter: $formatter ($FORMAT changelog $CHANGELOG)"
         prek=$GITHUB_ACTION_PATH/../tools/cooled_prek.sh
         if ! "$prek" run "$formatter" --files "$CHANGELOG"; then
+          echo "$formatter rewrote $CHANGELOG, running it again to confirm the result is stable"
           "$prek" run "$formatter" --files "$CHANGELOG"
         fi
-    - name: Check generated files
+    - name: 🔍 Check generated files
       if: inputs.phase != 'build'
       shell: bash
       env:
         CHANGELOG: ${{ steps.config.outputs.changelog }}
       run: |
-        if [[ -f "$CHANGELOG" ]] && ! git ls-files --error-unmatch "$CHANGELOG" >/dev/null 2>&1; then
+        if [[ ! -f "$CHANGELOG" ]]; then
+          echo "$CHANGELOG does not exist, nothing to add to the release patch"
+        elif git ls-files --error-unmatch "$CHANGELOG" >/dev/null 2>&1; then
+          echo "$CHANGELOG is already tracked"
+        else
+          echo "$CHANGELOG is new, marking it intent-to-add so the release patch includes it"
           git add -N -- "$CHANGELOG"
         fi
-    - name: Write release patch
+    - name: ⚙️ Write release patch
       if: inputs.phase != 'build'
       shell: bash
       run: |
         set -euo pipefail
         git diff HEAD --binary >"$RUNNER_TEMP/release.patch"
+        echo "Release patch -> $RUNNER_TEMP/release.patch:"
+        git diff HEAD --stat

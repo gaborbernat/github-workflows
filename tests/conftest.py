@@ -260,7 +260,6 @@ def action(
         "CHANGELOG": "CHANGELOG.md",
         "FRAGMENTS": "changelog.d",
         "FORMAT": action_config.get("inputs", {}).get("format", {}).get("default", "none"),
-        "CHECKS": "true",
         "BRANCH": "main",
         "ANNOTATED": "false",
         "ARTIFACT_URL": "",
@@ -474,17 +473,6 @@ def _expression(
     inputs: dict[str, str],
     step_outputs: dict[str, dict[str, str]],
 ) -> str:
-    if " && " in expression and " || " in expression:
-        condition, alternatives = expression.split(" && ", 1)
-        true_value, false_value = alternatives.split(" || ", 1)
-        return _expression(
-            true_value if _condition(condition, environment, inputs, step_outputs) else false_value,
-            environment,
-            inputs,
-            step_outputs,
-        )
-    if expression.startswith("'") and expression.endswith("'"):
-        return expression[1:-1]
     if " == " in expression or " != " in expression:
         return str(_condition(expression, environment, inputs, step_outputs)).lower()
     if expression.startswith("inputs."):

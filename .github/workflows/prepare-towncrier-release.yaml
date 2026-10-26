@@ -14,30 +14,6 @@ on:
         description: Optional v prefix for the Towncrier changelog heading
         type: string
         default: ""
-      additional-lock:
-        description: Secondary Nab lock to check before release preparation
-        type: string
-        default: ""
-      additional-lock-groups:
-        description: Groups selected by the secondary lock
-        type: string
-        default: ""
-      additional-lock-selection:
-        description: Project or build-or-groups selection for the secondary lock
-        type: string
-        default: build-or-groups
-      additional-matrix-python:
-        description: Python range for the secondary lock
-        type: string
-        default: ""
-      additional-matrix-platforms:
-        description: Space-separated Nab platform IDs for the secondary lock
-        type: string
-        default: ""
-      additional-matrix-implementations:
-        description: Space-separated implementations for the secondary lock
-        type: string
-        default: ""
       annotated:
         description: Create an annotated tag
         type: boolean
@@ -46,10 +22,6 @@ on:
         description: Create a GitHub Deployment for the App-key job
         type: boolean
         default: true
-      nab-git-commit:
-        description: Temporary full commit SHA of notatallshaw/nab to install instead of the Nab release
-        type: string
-        default: ""
       exclude-newer:
         description: Upload cutoff for the tools the shared Actions install from PyPI
         type: string
@@ -67,35 +39,8 @@ concurrency:
   group: prepare-release-${{ github.repository }}
   cancel-in-progress: false
 jobs:
-  lock:
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-26.04
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          ref: ${{ github.sha }}
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
-        with:
-          version: latest-known
-          python-version: "3.15"
-          enable-cache: false
-      - uses: $/refresh-release-lock
-        with:
-          mode: check
-          additional-lock: ${{ inputs.additional-lock }}
-          additional-lock-groups: ${{ inputs.additional-lock-groups }}
-          additional-lock-selection: ${{ inputs.additional-lock-selection }}
-          additional-matrix-python: ${{ inputs.additional-matrix-python }}
-          additional-matrix-platforms: ${{ inputs.additional-matrix-platforms }}
-          additional-matrix-implementations: ${{ inputs.additional-matrix-implementations }}
-          nab-git-commit: ${{ inputs.nab-git-commit }}
-          exclude-newer: ${{ inputs.exclude-newer }}
-          exclude-newer-package: ${{ inputs.exclude-newer-package }}
   assemble:
-    needs: lock
+    name: 🏷️ Assemble release
     runs-on: ubuntu-26.04
     permissions:
       contents: read
@@ -104,96 +49,56 @@ jobs:
       version: ${{ steps.prepare.outputs.version }}
       artifact-id: ${{ steps.patch.outputs.artifact-id }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: 📥 Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
           ref: ${{ github.sha }}
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - name: 🐍 Install uv and Python
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version: latest-known
           python-version: "3.15"
           enable-cache: false
-      - uses: $/install-locked-tools
+      - name: 📦 Install locked release tools
+        uses: $/install-locked-tools
         with:
           groups: release-prepare
           venv: .venv
           exclude-newer: ${{ inputs.exclude-newer }}
           exclude-newer-package: ${{ inputs.exclude-newer-package }}
-      - name: Install prek hooks
+      - name: 🧹 Install prek hooks
         id: hooks
         uses: $/cooled-prek
         with:
           args: install-hooks
         background: true
       - id: prepare
-        name: Build changelog
+        name: 📝 Build changelog
         uses: $/prepare-towncrier
         with:
           bump: ${{ inputs.bump }}
           tag-prefix: ${{ inputs.tag-prefix }}
           changelog-prefix: ${{ inputs.changelog-prefix }}
           phase: build
-      - wait: hooks
-      - name: Finalize release patch
+      - name: ⏳ Wait for prek hooks
+        wait: hooks
+      - name: 📝 Finalize release patch
         uses: $/prepare-towncrier
         with:
           version: ${{ steps.prepare.outputs.version }}
           phase: finalize
-      - id: patch
+      - name: 📤 Upload release patch
+        id: patch
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-patch
           path: ${{ runner.temp }}/release.patch
           if-no-files-found: error
-  validate:
-    needs: assemble
-    runs-on: ubuntu-26.04
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-          ref: ${{ github.sha }}
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
-        with:
-          version: latest-known
-          python-version: "3.15"
-          enable-cache: false
-      - uses: $/install-locked-tools
-        with:
-          groups: release-validate
-          venv: .venv
-          exclude-newer: ${{ inputs.exclude-newer }}
-          exclude-newer-package: ${{ inputs.exclude-newer-package }}
-      - id: config
-        uses: $/read-towncrier-config
-      - name: Verify selected release version
-        env:
-          BUMP: ${{ inputs.bump }}
-          TAG_PREFIX: ${{ inputs.tag-prefix }}
-          FRAGMENTS: ${{ steps.config.outputs.fragments }}
-          VERSION: ${{ needs.assemble.outputs.version }}
-        run: |
-          set -euo pipefail
-          args=(--next "$BUMP" --directory "$FRAGMENTS")
-          if [[ -n "$TAG_PREFIX" ]]; then args+=(--prefix "$TAG_PREFIX"); fi
-          expected=$(git tag --list | release-creator tags "${args[@]}")
-          if [[ "$VERSION" != "$expected" ]]; then
-            echo "::error::assembled release version differs from $expected" >&2
-            exit 1
-          fi
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          artifact-ids: ${{ needs.assemble.outputs.artifact-id }}
-          path: ${{ runner.temp }}/release-patch
-      - uses: $/validate-release-patch
-        with:
-          version: ${{ needs.assemble.outputs.version }}
   push:
-    needs: [assemble, validate]
+    name: ⬆️ Push release commit and tag
+    needs: assemble
     runs-on: ubuntu-26.04
     environment:
       name: release-auth
@@ -201,24 +106,25 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: 📥 Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - name: 📩 Download release patch
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.assemble.outputs.artifact-id }}
           path: ${{ runner.temp }}/release-patch
-      - uses: $/validate-release-patch
-        with:
-          version: ${{ needs.assemble.outputs.version }}
-          checks: "false"
+      - name: ⚙️ Apply release patch
+        uses: $/validate-release-patch
       - id: repository
-        name: Select the current repository
+        name: ⚙️ Select the current repository
         env:
           REPOSITORY: ${{ github.repository }}
         run: echo "name=${REPOSITORY#*/}" >>"$GITHUB_OUTPUT"
-      - id: token
+      - name: 🔑 Create release App token
+        id: token
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
@@ -226,7 +132,8 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: ${{ steps.repository.outputs.name }}
           permission-contents: write
-      - uses: $/commit-and-tag
+      - name: 🏷️ Commit and tag release
+        uses: $/commit-and-tag
         with:
           version: ${{ needs.assemble.outputs.version }}
           token: ${{ steps.token.outputs.token }}

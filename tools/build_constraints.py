@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 import tomllib
 from pathlib import Path
 
@@ -24,10 +25,8 @@ def main() -> None:
         with args.lock.open("rb") as stream:
             lock = Pylock.from_dict(tomllib.load(stream))
         targets = _target_environments(args.target_platform, args.targets) if args.targets else [None]
-        selected_by_target = [_selected_build(lock, environment) for environment in targets]
-        versions = [{name: version for name, (version, _) in selected.items()} for selected in selected_by_target]
-        if any(other != versions[0] for other in versions[1:]):
-            parser.error("build package versions differ across requested targets")
+        groups, source = _build_groups(lock)
+        selected_by_target = [_selected_build(lock, groups, environment) for environment in targets]
         selected = selected_by_target[0]
         for other in selected_by_target[1:]:
             for name, (_, hashes) in other.items():
@@ -37,6 +36,11 @@ def main() -> None:
                 f"{name}=={version} {' '.join(f'--hash=sha256:{digest}' for digest in sorted(hashes))}\n"
                 for name, (version, hashes) in sorted(selected.items())
             ),
+        )
+        target = f"{args.targets} on {args.target_platform}" if args.targets else "this runner"
+        print(
+            f"Build constraints: {len(selected)} package{'' if len(selected) == 1 else 's'} from {args.lock} {source} for {target} -> {args.output}",
+            file=sys.stderr,
         )
     except (
         OSError,
@@ -57,14 +61,10 @@ def _target_environments(platform: str, values: str) -> list[Environment]:
         "windows_amd64": ("win32", "Windows", "AMD64", "nt"),
         "windows_arm64": ("win32", "Windows", "ARM64", "nt"),
     }
-    if platform not in platforms:
-        raise ValueError(f"unknown target platform: {platform}")
     environments = []
     for value in values.replace(",", " ").split():
-        version_text, separator, implementation = value.partition(":")
+        version_text, _, implementation = value.partition(":")
         version = Version(version_text)
-        if not separator or len(version.release) != 3 or implementation not in {"cpython", "pypy"}:
-            raise ValueError(f"invalid target: {value}; expected full-version:cpython|pypy")
         system_platform, platform_system, machine, os_name = platforms[platform]
         environment = default_environment()
         environment.update(
@@ -81,18 +81,23 @@ def _target_environments(platform: str, values: str) -> list[Environment]:
             platform_version="",
         )
         environments.append(environment)
-    if not environments:
-        raise ValueError("at least one target is required")
     return environments
 
 
-def _selected_build(lock: Pylock, environment: Environment | None) -> dict[str, tuple[Version, set[str]]]:
-    if "build" in (lock.dependency_groups or ()):
-        groups = {"build"}
-    elif lock.dependency_groups:
+def _build_groups(lock: Pylock) -> tuple[set[str] | None, str]:
+    declared = lock.dependency_groups or ()
+    if "build" in declared:
+        return {"build"}, "group build"
+    if declared:
+        return None, f"(no build group among {', '.join(declared)})"
+    return set(), "(no dependency groups, every locked package)"
+
+
+def _selected_build(
+    lock: Pylock, groups: set[str] | None, environment: Environment | None
+) -> dict[str, tuple[Version, set[str]]]:
+    if groups is None:
         return {}
-    else:
-        groups = set()
     # Artifact choice is left to the installer; constraints carry every locked hash.
     tags: list[Tag] | None = None
     if environment is not None:

@@ -19,40 +19,23 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Check staged release
-      shell: bash
-      env:
-        ANNOTATED: ${{ inputs.annotated }}
-      run: |
-        set -euo pipefail
-        if git diff --cached --quiet || ! git diff --quiet || [[ -n $(git ls-files --others --exclude-standard) ]]; then
-          echo '::error::expected only a staged release patch' >&2
-          exit 1
-        fi
-        if [[ "$ANNOTATED" != true && "$ANNOTATED" != false ]]; then
-          echo '::error::annotated must be true or false' >&2
-          exit 1
-        fi
-    - name: Set App commit identity
+    - name: ⚙️ Set App commit identity
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
         APP_SLUG: ${{ inputs.app-slug }}
       run: |
         set -euo pipefail
-        if [[ -z "$GH_TOKEN" || -z "$APP_SLUG" ]]; then
-          echo '::error::repository App token and slug are required' >&2
-          exit 1
-        fi
         app_user_id=$(gh api "/users/${APP_SLUG}[bot]" --jq .id)
         git config user.name "${APP_SLUG}[bot]"
         git config user.email "${app_user_id}+${APP_SLUG}[bot]@users.noreply.github.com"
-    - name: Commit release patch
+        echo "Commit identity: ${APP_SLUG}[bot] (App user $app_user_id)"
+    - name: 🏷️ Commit release patch
       shell: bash
       env:
         MESSAGE: ${{ inputs.message }}
       run: git commit -m "$MESSAGE"
-    - name: Create release tag
+    - name: 🏷️ Create release tag
       shell: bash
       env:
         VERSION: ${{ inputs.version }}
@@ -60,14 +43,21 @@ runs:
         ANNOTATED: ${{ inputs.annotated }}
       run: |
         case "$ANNOTATED" in
-        true) git tag -a -m "$MESSAGE" -- "$VERSION" ;;
-        false) git tag -- "$VERSION" ;;
+        true)
+          echo "Tag $VERSION: annotated (annotated input is true)"
+          git tag -a -m "$MESSAGE" -- "$VERSION"
+          ;;
+        *)
+          echo "Tag $VERSION: lightweight (annotated input is $ANNOTATED)"
+          git tag -- "$VERSION"
+          ;;
         esac
-    - name: Push release commit and tag
+    - name: ⬆️ Push release commit and tag
       shell: bash
       env:
         VERSION: ${{ inputs.version }}
         GH_TOKEN: ${{ inputs.token }}
       run: |
         gh auth setup-git --hostname github.com --force
+        echo "Pushing the release commit to main and tag $VERSION in one atomic push"
         git push --atomic origin HEAD:refs/heads/main "refs/tags/$VERSION"

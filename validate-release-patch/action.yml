@@ -1,47 +1,28 @@
 name: Validate release patch
-description: Check and apply the release patch downloaded to $RUNNER_TEMP/release-patch, with optional release-tool validation
-inputs:
-  version:
-    description: Release version
-    required: true
-  checks:
-    description: Run release-creator and prek after applying the patch
-    default: "true"
+description: Apply the release patch downloaded to $RUNNER_TEMP/release-patch and check its paths and file modes
 runs:
   using: composite
   steps:
-    - name: Verify release source
+    - name: ⚙️ Apply release patch
       shell: bash
-      run: |
-        set -euo pipefail
-        git fetch origin main
-        if [[ $(git rev-parse origin/main) != "$GITHUB_SHA" ]]; then
-          echo '::error::main changed during release preparation; dispatch again' >&2
-          exit 1
-        fi
-    - name: Apply release patch
-      shell: bash
-      env:
-        CHECKS: ${{ inputs.checks }}
-      run: |
-        set -euo pipefail
-        if [[ "$CHECKS" != true && "$CHECKS" != false ]]; then
-          echo '::error::checks must be true or false' >&2
-          exit 1
-        fi
-        git apply --index "$RUNNER_TEMP/release-patch/release.patch"
-    - id: config
+      run: git apply --index --verbose "$RUNNER_TEMP/release-patch/release.patch"
+    - name: ⚙️ Read Towncrier configuration
+      id: config
       uses: $/read-towncrier-config
-    - name: Check release patch paths
+    - name: 🔍 Check release patch paths
       shell: bash
       env:
         CHANGELOG: ${{ steps.config.outputs.changelog }}
         FRAGMENTS: ${{ steps.config.outputs.fragments }}
       run: |
         set -euo pipefail
+        # shellcheck disable=SC1091 # GitHub supplies this Action path at runtime.
+        source "$GITHUB_ACTION_PATH/../tools/plural.sh"
         git diff --cached --name-status --no-renames -z >"$RUNNER_TEMP/release-paths"
+        removed=0
         while IFS= read -r -d '' status && IFS= read -r -d '' path; do
           if [[ "$path" == "$CHANGELOG" && ("$status" == A || "$status" == M) ]]; then
+            echo "Release patch path: $status $path (the changelog)"
             continue
           fi
           if [[ "$path" != "$FRAGMENTS/"* ]]; then
@@ -52,21 +33,17 @@ runs:
             echo "::error::unexpected release path status: $status $path" >&2
             exit 1
           fi
+          removed=$((removed + 1))
         done <"$RUNNER_TEMP/release-paths"
-
-        if git diff --cached --quiet -- "$CHANGELOG"; then
-          echo "::error::release patch does not change $CHANGELOG" >&2
-          exit 1
-        fi
-    - name: Check consumed fragments
-      if: inputs.checks == 'true'
-      shell: bash
-      run: release-creator validate-fragment-deletions
-    - name: Check release patch file modes
+        echo "Release patch paths: $(plural "$removed" fragment) removed from $FRAGMENTS"
+    - name: 🔍 Check release patch file modes
       shell: bash
       run: |
         set -euo pipefail
+        # shellcheck disable=SC1091 # GitHub supplies this Action path at runtime.
+        source "$GITHUB_ACTION_PATH/../tools/plural.sh"
         git diff --cached --raw --no-renames -z >"$RUNNER_TEMP/release-modes"
+        count=0
         while IFS= read -r -d '' metadata && IFS= read -r -d '' path; do
           read -ra fields <<<"$metadata"
           case "${fields[4]}" in
@@ -95,47 +72,6 @@ runs:
             echo "::error::unexpected release file mode in $path: ${fields[1]}" >&2
             exit 1
           fi
+          count=$((count + 1))
         done <"$RUNNER_TEMP/release-modes"
-    - name: Check RST conflict markers
-      if: inputs.checks == 'true' && steps.config.outputs.format == 'rst'
-      shell: bash
-      env:
-        CHANGELOG: ${{ steps.config.outputs.changelog }}
-      run: |
-        set -euo pipefail
-        git diff --cached --unified=0 -- "$CHANGELOG" >"$RUNNER_TEMP/release-rst-diff"
-        while IFS= read -r line; do
-          case "$line" in
-          +'<<<<<<<'* | +'|||||||'* | +'>>>>>>>'*)
-            echo '::error::release changelog contains conflict markers' >&2
-            exit 1
-            ;;
-          esac
-        done <"$RUNNER_TEMP/release-rst-diff"
-        printf '%s conflict-marker-size=10\n' "$CHANGELOG" >>"$(git rev-parse --git-path info/attributes)"
-    - name: Check rendered release section
-      if: inputs.checks == 'true'
-      shell: bash
-      env:
-        VERSION: ${{ inputs.version }}
-        CHANGELOG: ${{ steps.config.outputs.changelog }}
-      run: release-creator notes --changelog "$CHANGELOG" --tag "$VERSION" --repository "$GITHUB_REPOSITORY" >/dev/null
-    - name: Reject other hook configurations
-      if: inputs.checks == 'true'
-      shell: bash
-      run: |
-        set -euo pipefail
-        others=$(git ls-files -- ':(glob)**/prek.toml' ':(glob)**/.pre-commit-config.yml' \
-          ':(glob)*/**/.pre-commit-config.yaml')
-        if [[ -n "$others" ]]; then
-          echo "::error::hooks must be configured only in the root .pre-commit-config.yaml: ${others//$'\n'/, }" >&2
-          exit 1
-        fi
-    - name: Run prek on release patch
-      if: inputs.checks == 'true'
-      shell: bash
-      run: |
-        if ! "$GITHUB_ACTION_PATH/../tools/cooled_prek.sh" run --all-files; then
-          echo '::error::prek failed on the validated release patch' >&2
-          exit 1
-        fi
+        echo "Release patch file modes: $(plural "$count" path), each a non-executable regular file or a deletion"

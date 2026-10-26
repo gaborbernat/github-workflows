@@ -19,9 +19,6 @@ inputs:
   additional-matrix-implementations:
     description: Space-separated implementations for the secondary lock
     default: ""
-  nab-git-commit:
-    description: Temporary full commit SHA of notatallshaw/nab to install instead of the Nab release
-    default: ""
   exclude-newer:
     description: Upload cutoff for the tools this Action installs from PyPI
     default: 7 days
@@ -31,33 +28,98 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Count changed fragments
+    - id: news-change
+      name: 🧭 Check whether news inputs changed
       shell: bash
       env:
         BASE_REF: ${{ github.base_ref }}
-      run: release-creator validate-news --base "$BASE_REF" >"$RUNNER_TEMP/news-fragment-count"
-    - name: Require news for human changes
+      run: |
+        set -euo pipefail
+        base=$(git merge-base "origin/$BASE_REF" HEAD)
+        python3 - "$base" "$GITHUB_OUTPUT" <<'PY'
+        import subprocess
+        import sys
+        import tomllib
+        from pathlib import Path
+
+        base, output = sys.argv[1:]
+
+
+        def towncrier(ref: str, name: str) -> object:
+            shown = subprocess.run(["git", "show", f"{ref}:{name}"], capture_output=True, text=True, check=False)
+            if shown.returncode:
+                return None
+            try:
+                return tomllib.loads(shown.stdout).get("tool", {}).get("towncrier")
+            except tomllib.TOMLDecodeError:
+                return shown.stdout
+
+
+        names = ("towncrier.toml", "pyproject.toml")
+        config = any(towncrier(base, name) != towncrier("HEAD", name) for name in names)
+        current = next((table for name in names if isinstance(table := towncrier("HEAD", name), dict)), {})
+        changed = (
+            subprocess.run(
+                ["git", "diff", "--name-only", base, "HEAD", "--", current["directory"]],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.splitlines()
+            if "directory" in current
+            else []
+        )
+        fragments = bool(changed)
+        with Path(output).open("a", encoding="utf-8") as stream:
+            stream.write(f"fragments={str(fragments).lower()}\nconfig={str(config).lower()}\n")
+        directory = current.get("directory", "the fragment directory (not configured)")
+        if config:
+            print(f"Fragment check runs: the Towncrier configuration changed since {base[:12]}")
+        elif fragments:
+            print(f"Fragment check runs: {len(changed)} file{'' if len(changed) == 1 else 's'} changed in {directory}")
+        else:
+            print(f"Fragment check skipped: nothing changed in {directory} and the Towncrier configuration is unchanged")
+        PY
+    - name: 🔍 Count changed fragments
+      if: steps.news-change.outputs.fragments == 'true' || steps.news-change.outputs.config == 'true'
+      shell: bash
+      env:
+        BASE_REF: ${{ github.base_ref }}
+      run: |
+        # shellcheck disable=SC1091 # GitHub supplies this Action path at runtime.
+        source "$GITHUB_ACTION_PATH/../tools/plural.sh"
+        release-creator validate-news --base "$BASE_REF" >"$RUNNER_TEMP/news-fragment-count"
+        echo "Changed fragments: $(plural "$(<"$RUNNER_TEMP/news-fragment-count")" fragment) valid against origin/$BASE_REF"
+    - name: 🔍 Require news for human changes
       shell: bash
       env:
         SKIP_NEWS: ${{ contains(github.event.pull_request.labels.*.name, 'skip news') }}
         BOT_AUTHOR: ${{ github.event.pull_request.user.type == 'Bot' }}
       run: |
-        read -r fragments <"$RUNNER_TEMP/news-fragment-count"
-        if ((! fragments)) && [[ "$SKIP_NEWS" != true && "$BOT_AUTHOR" != true ]]; then
+        # shellcheck disable=SC1091 # GitHub supplies this Action path at runtime.
+        source "$GITHUB_ACTION_PATH/../tools/plural.sh"
+        fragments=0
+        if [[ -f "$RUNNER_TEMP/news-fragment-count" ]]; then read -r fragments <"$RUNNER_TEMP/news-fragment-count"; fi
+        if ((fragments)); then
+          echo "News requirement: met by $(plural "$fragments" fragment)"
+        elif [[ "$SKIP_NEWS" == true ]]; then
+          echo 'News requirement: waived by the skip news label'
+        elif [[ "$BOT_AUTHOR" == true ]]; then
+          echo 'News requirement: waived for a bot author'
+        else
           echo '::error::add a changelog fragment or apply the skip news label' >&2
           exit 1
         fi
     - id: lock-change
-      name: Check whether release inputs changed
+      name: 🧭 Check whether release inputs changed
       shell: bash
       env:
         BASE_REF: ${{ github.base_ref }}
         ADDITIONAL_LOCK: ${{ inputs.additional-lock }}
       run: |
-        paths=(':(glob)**/pyproject.toml' pylock.toml nab.toml ':(glob).github/workflows/**')
-        if [[ -n "$ADDITIONAL_LOCK" ]]; then paths+=("$ADDITIONAL_LOCK"); fi
-        changed=$(git diff --name-only "origin/$BASE_REF...HEAD" -- "${paths[@]}")
+        changed=$(git diff --name-only "origin/$BASE_REF...HEAD" -- \
+          ':(glob)**/pyproject.toml' pylock.toml ':(glob)pylock.*.toml' nab.toml)
         if [[ -z "$changed" ]]; then
+          echo 'Lock check skipped: no lock inputs changed (pyproject.toml, pylock.toml, pylock.*.toml, nab.toml untouched)'
           echo 'changed=false' >>"$GITHUB_OUTPUT"
           exit 0
         fi
@@ -70,11 +132,13 @@ runs:
             echo '::error::the release lock was removed' >&2
             exit 1
           fi
+          echo 'Lock check skipped: no pylock.toml, and either the base had none or nothing configures Nab'
           echo 'changed=false' >>"$GITHUB_OUTPUT"
           exit 0
         fi
+        echo "Lock check runs: changed ${changed//$'\n'/ }"
         echo 'changed=true' >>"$GITHUB_OUTPUT"
-    - name: Check the release lock against the project
+    - name: 🔒 Check the release lock against the project
       if: steps.lock-change.outputs.changed == 'true'
       uses: $/refresh-release-lock
       with:
@@ -84,7 +148,6 @@ runs:
         additional-matrix-python: ${{ inputs.additional-matrix-python }}
         additional-matrix-platforms: ${{ inputs.additional-matrix-platforms }}
         additional-matrix-implementations: ${{ inputs.additional-matrix-implementations }}
-        nab-git-commit: ${{ inputs.nab-git-commit }}
         exclude-newer: ${{ inputs.exclude-newer }}
         exclude-newer-package: ${{ inputs.exclude-newer-package }}
         mode: check

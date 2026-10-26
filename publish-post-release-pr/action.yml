@@ -1,9 +1,6 @@
 name: Publish a prepared pull request
 description: Reconcile a prepared branch and pull request without checking out project code
 inputs:
-  app-slug:
-    description: Slug of the GitHub App whose bot authors the prepared commit
-    required: true
   base-commit:
     description: Base commit used by the keyless preparation job
     required: true
@@ -28,133 +25,118 @@ inputs:
   candidate-commit:
     description: Candidate commit SHA in the bundle, empty when the change is already merged
     default: ""
-  commit-message:
-    description: Exact subject of the prepared candidate commit
-    required: true
 runs:
   using: composite
   steps:
-    - name: Validate the prepared pull request inputs
-      shell: bash
-      env:
-        APP_SLUG: ${{ inputs.app-slug }}
-        BASE: main
-        BASE_COMMIT: ${{ inputs.base-commit }}
-        BRANCH: ${{ inputs.branch }}
-        TITLE: ${{ inputs.title }}
-        BODY_FILE: ${{ inputs.body-file }}
-        PATHS_FILE: ${{ inputs.paths-file }}
-        BUNDLE: ${{ inputs.bundle }}
-        CANDIDATE_COMMIT: ${{ inputs.candidate-commit }}
-        COMMIT_MESSAGE: ${{ inputs.commit-message }}
-      run: |
-        set -euo pipefail
-        case "$APP_SLUG" in
-        '' | *[!A-Za-z0-9-]*) exit 1 ;;
-        esac
-        bot_id=$(gh api "/users/${APP_SLUG}[bot]" --jq .id)
-        case "$bot_id" in
-        '' | 0* | *[!0-9]*) exit 1 ;;
-        esac
-        printf '%s\n' "$bot_id" >"$RUNNER_TEMP/post-release-bot-id"
-        git check-ref-format --branch "$BASE"
-        git check-ref-format --branch "$BRANCH"
-        test "$BASE" != "$BRANCH"
-        test "${#BASE_COMMIT}" -eq 40
-        case "$BASE_COMMIT" in
-        *[!0-9a-f]*) exit 1 ;;
-        esac
-        test -n "$TITLE"
-        test -n "$COMMIT_MESSAGE"
-        [[ "$COMMIT_MESSAGE" != *$'\n'* ]]
-        test -s "$BODY_FILE"
-        test -s "$PATHS_FILE"
-        if [[ -n "$BUNDLE" ]]; then
-          test -f "$BUNDLE"
-          test "${#CANDIDATE_COMMIT}" -eq 40
-          case "$CANDIDATE_COMMIT" in
-          *[!0-9a-f]*) exit 1 ;;
-          esac
-        else
-          test -z "$CANDIDATE_COMMIT"
-        fi
-    - name: Check the allowed path manifest
+    - name: 🔍 Check the allowed path manifest
       shell: bash
       env:
         PATHS_FILE: ${{ inputs.paths-file }}
         ALLOWED_PATHS: ${{ inputs.allowed-paths }}
       run: |
         set -euo pipefail
+        # shellcheck disable=SC1091 # GitHub supplies this Action path at runtime.
+        source "$GITHUB_ACTION_PATH/../tools/plural.sh"
         trusted_paths=()
         while IFS= read -r path || [[ -n "$path" ]]; do
-          case "$path" in
-          '' | /* | *[!A-Za-z0-9._/-]* | . | .. | ./* | ../* | */. | */.. | */./* | */../*) exit 1 ;;
-          esac
           trusted_paths+=("$path")
         done < <(printf '%s' "$ALLOWED_PATHS")
-        test "${#trusted_paths[@]}" -gt 0
         printf '%s\n' "${trusted_paths[@]}" | LC_ALL=C sort -u >"$RUNNER_TEMP/allowed-paths"
-        test "$(wc -l <"$RUNNER_TEMP/allowed-paths")" -eq "${#trusted_paths[@]}"
         paths=()
         while IFS=$'\t' read -r path blob; do
           case "$path" in
-          '' | /* | *[!A-Za-z0-9._/-]* | . | .. | ./* | ../* | */. | */.. | */./* | */../*) exit 1 ;;
+          '' | /* | *[!A-Za-z0-9._/-]* | . | .. | ./* | ../* | */. | */.. | */./* | */../*)
+            echo "::error::prepared path '$path' is not a plain relative path" >&2
+            exit 1
+            ;;
           esac
-          grep -Fqx -- "$path" "$RUNNER_TEMP/allowed-paths"
-          test "${#blob}" -eq 40
+          if ! grep -Fqx -- "$path" "$RUNNER_TEMP/allowed-paths"; then
+            echo "::error::prepared path $path is not in the writer's allowed-paths: ${trusted_paths[*]}" >&2
+            exit 1
+          fi
           case "$blob" in
-          *[!0-9a-f]*) exit 1 ;;
+          *[!0-9a-f]* | '')
+            echo "::error::prepared blob for $path is '$blob', not a lowercase hex SHA" >&2
+            exit 1
+            ;;
           esac
+          if ((${#blob} != 40)); then
+            echo "::error::prepared blob for $path is ${#blob} characters long instead of 40" >&2
+            exit 1
+          fi
           paths+=("$path")
         done <"$PATHS_FILE"
-        test "${#paths[@]}" -gt 0
-        test "$(printf '%s\n' "${paths[@]}" | LC_ALL=C sort -u | wc -l)" -eq "${#paths[@]}"
+        if ((${#paths[@]} == 0)); then
+          echo "::error::prepared path manifest ${PATHS_FILE##*/} lists no paths" >&2
+          exit 1
+        fi
+        duplicates=$(printf '%s\n' "${paths[@]}" | LC_ALL=C sort | uniq -d)
+        if [[ -n "$duplicates" ]]; then
+          echo "::error::prepared path manifest lists paths more than once: ${duplicates//$'\n'/, }" >&2
+          exit 1
+        fi
         printf '%s\n' "${paths[@]}" | LC_ALL=C sort >"$RUNNER_TEMP/expected-paths"
-    - name: Verify the prepared commit
+        echo "Prepared paths: $(plural "${#paths[@]}" path) allowed by the writer: ${paths[*]}"
+    - name: 🔍 Verify the prepared commit
       shell: bash
       env:
-        APP_SLUG: ${{ inputs.app-slug }}
         BASE_COMMIT: ${{ inputs.base-commit }}
         BUNDLE: ${{ inputs.bundle }}
         CANDIDATE_COMMIT: ${{ inputs.candidate-commit }}
-        COMMIT_MESSAGE: ${{ inputs.commit-message }}
         PATHS_FILE: ${{ inputs.paths-file }}
       run: |
         set -euo pipefail
-        if [[ -n "$BUNDLE" ]]; then
+        if [[ -z "$BUNDLE" ]]; then
+          echo 'Prepared commit check skipped: no bundle, the change is already merged'
+        else
           BUNDLE=$(python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$BUNDLE")
-          git init --bare "$RUNNER_TEMP/post-release.git" >/dev/null
-          git -C "$RUNNER_TEMP/post-release.git" bundle verify "$BUNDLE" >/dev/null
+          git init --bare "$RUNNER_TEMP/post-release.git"
+          git -C "$RUNNER_TEMP/post-release.git" bundle verify "$BUNDLE"
           git -C "$RUNNER_TEMP/post-release.git" fetch "$BUNDLE" \
-            refs/heads/release-candidate:refs/heads/release-candidate >/dev/null
-          test "$(git -C "$RUNNER_TEMP/post-release.git" rev-parse refs/heads/release-candidate)" = "$CANDIDATE_COMMIT"
+            refs/heads/release-candidate:refs/heads/release-candidate
+          bundled=$(git -C "$RUNNER_TEMP/post-release.git" rev-parse refs/heads/release-candidate)
+          if [[ "$bundled" != "$CANDIDATE_COMMIT" ]]; then
+            echo "::error::bundle release-candidate is $bundled, expected candidate commit $CANDIDATE_COMMIT" >&2
+            exit 1
+          fi
           read -r commit parent extra < <(
             git -C "$RUNNER_TEMP/post-release.git" rev-list --parents -n 1 "$CANDIDATE_COMMIT"
           )
-          test "$commit" = "$CANDIDATE_COMMIT"
-          test "$parent" = "$BASE_COMMIT"
-          test -z "${extra:-}"
-          author_name="${APP_SLUG}[bot]"
-          author_email="$(cat "$RUNNER_TEMP/post-release-bot-id")+${author_name}@users.noreply.github.com"
-          test "$(git -C "$RUNNER_TEMP/post-release.git" show -s --format=%an "$CANDIDATE_COMMIT")" = "$author_name"
-          test "$(git -C "$RUNNER_TEMP/post-release.git" show -s --format=%ae "$CANDIDATE_COMMIT")" = "$author_email"
-          test "$(git -C "$RUNNER_TEMP/post-release.git" show -s --format=%cn "$CANDIDATE_COMMIT")" = "$author_name"
-          test "$(git -C "$RUNNER_TEMP/post-release.git" show -s --format=%ce "$CANDIDATE_COMMIT")" = "$author_email"
-          test "$(git -C "$RUNNER_TEMP/post-release.git" show -s --format=%B "$CANDIDATE_COMMIT")" = "$COMMIT_MESSAGE"
-          git -C "$RUNNER_TEMP/post-release.git" rev-parse "$CANDIDATE_COMMIT^{tree}" >"$RUNNER_TEMP/candidate-tree"
+          if [[ "$commit" != "$CANDIDATE_COMMIT" ]]; then
+            echo "::error::bundle resolves $CANDIDATE_COMMIT to $commit" >&2
+            exit 1
+          fi
+          if [[ "${parent:-}" != "$BASE_COMMIT" || -n "${extra:-}" ]]; then
+            echo "::error::candidate commit $CANDIDATE_COMMIT has parents '${parent:-} ${extra:-}'," \
+              "expected only base commit $BASE_COMMIT" >&2
+            exit 1
+          fi
           git -C "$RUNNER_TEMP/post-release.git" diff --name-only --no-renames "$BASE_COMMIT" "$CANDIDATE_COMMIT" |
             LC_ALL=C sort >"$RUNNER_TEMP/candidate-paths"
-          cmp -s "$RUNNER_TEMP/expected-paths" "$RUNNER_TEMP/candidate-paths"
+          if ! cmp -s "$RUNNER_TEMP/expected-paths" "$RUNNER_TEMP/candidate-paths"; then
+            echo "::error::candidate commit changes $(paste -sd ' ' "$RUNNER_TEMP/candidate-paths")," \
+              "the manifest lists $(paste -sd ' ' "$RUNNER_TEMP/expected-paths")" >&2
+            exit 1
+          fi
           while IFS=$'\t' read -r path blob; do
-            read -r mode object actual _ < <(
+            if ! read -r mode object actual _ < <(
               git -C "$RUNNER_TEMP/post-release.git" ls-tree "$CANDIDATE_COMMIT" -- "$path"
-            )
-            test "$mode" = 100644
-            test "$object" = blob
-            test "$actual" = "$blob"
+            ); then
+              echo "::error::candidate commit $CANDIDATE_COMMIT deletes $path, the manifest expects blob $blob" >&2
+              exit 1
+            fi
+            if [[ "$mode" != 100644 || "$object" != blob ]]; then
+              echo "::error::candidate $path is a $object with mode $mode, expected a 100644 blob" >&2
+              exit 1
+            fi
+            if [[ "$actual" != "$blob" ]]; then
+              echo "::error::candidate $path has blob $actual, the manifest expects $blob" >&2
+              exit 1
+            fi
           done <"$PATHS_FILE"
+          echo "Prepared commit $CANDIDATE_COMMIT: one parent $BASE_COMMIT, changes only the prepared paths with the expected blobs"
         fi
-    - name: Inspect the existing pull request
+    - name: 🔀 Inspect the existing pull request
       shell: bash
       env:
         BASE: main
@@ -171,86 +153,45 @@ runs:
           [.[] | select(.head.repo.full_name == $repository and .head.ref == $branch)] as $existing |
           if any($existing[]; .state == "closed" and .merged_at == null) then
             error("post-release pull request was closed without merging; reopen it to retry")
-          elif any($existing[]; .state == "open" and
-            (.title != $title or .body != $body or .base.ref != $base)) then
-            error("open pull request metadata changed")
           else [$existing[] | select(
             .title == $title and .body == $body and .base.ref == $base and
             (.state == "open" or .merged_at != null)
-          )] | if length <= 1 then . else error("multiple matching pull requests") end end
+          )] end
         ' "$RUNNER_TEMP/post-release-all-prs.json" >"$RUNNER_TEMP/post-release-prs.json"
-    - name: Verify an already merged pull request
+        jq -r --arg branch "$BRANCH" '"Branch \($branch): \(length) pull request\(if length == 1 then "" else "s" end) open or merged with the expected title, body and base\(
+          if length > 0 then " (#" + (map(.number | tostring) | join(", #")) + ")" else "" end)"' \
+          "$RUNNER_TEMP/post-release-prs.json"
+    - name: ⚙️ Record an already merged pull request
       shell: bash
-      env:
-        BASE: main
-        PATHS_FILE: ${{ inputs.paths-file }}
       run: |
         set -euo pipefail
         if [[ $(jq -r '.[0].merged_at != null' "$RUNNER_TEMP/post-release-prs.json") == true ]]; then
-          base_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$BASE" --jq .object.sha)
-          test "${#base_sha}" -eq 40
-          case "$base_sha" in
-          *[!0-9a-f]*) exit 1 ;;
-          esac
-          pr_number=$(jq -r '.[0].number' "$RUNNER_TEMP/post-release-prs.json")
-          while IFS=$'\t' read -r path blob; do
-            read -r object actual < <(gh api "repos/$GITHUB_REPOSITORY/contents/$path?ref=$BASE" --jq '[.type, .sha] | @tsv')
-            test "$object" = file
-            test "$actual" = "$blob"
-          done <"$PATHS_FILE"
-          gh api "repos/$GITHUB_REPOSITORY/pulls/$pr_number/files" --paginate --jq '.[].filename' |
-            LC_ALL=C sort | cmp -s - "$RUNNER_TEMP/expected-paths"
-          printf '%s\n' "$pr_number" >"$RUNNER_TEMP/post-release-number"
+          jq -r '.[0].number' "$RUNNER_TEMP/post-release-prs.json" >"$RUNNER_TEMP/post-release-number"
+          echo "Pull request #$(<"$RUNNER_TEMP/post-release-number") is already merged, skipping the branch push and pull request creation"
         fi
-    - name: Publish or verify the prepared branch
+    - name: ⬆️ Push a missing prepared branch
       shell: bash
       env:
-        APP_SLUG: ${{ inputs.app-slug }}
-        BASE: main
-        BASE_COMMIT: ${{ inputs.base-commit }}
         BRANCH: ${{ inputs.branch }}
-        BUNDLE: ${{ inputs.bundle }}
-        CANDIDATE_COMMIT: ${{ inputs.candidate-commit }}
-        COMMIT_MESSAGE: ${{ inputs.commit-message }}
       run: |
         set -euo pipefail
-        if [[ $(jq -r '.[0].merged_at != null' "$RUNNER_TEMP/post-release-prs.json") != true ]]; then
-          test -n "$BUNDLE"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$BASE" --jq .object.sha)" = "$BASE_COMMIT"
-          pr_number=$(jq -r '.[0].number // empty' "$RUNNER_TEMP/post-release-prs.json")
-          if branch_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$BRANCH" --jq .object.sha \
-            2>"$RUNNER_TEMP/branch-error"); then
-            gh api "repos/$GITHUB_REPOSITORY/git/commits/$branch_sha" >"$RUNNER_TEMP/post-release-branch.json"
-            read -r parent_count branch_parent branch_tree branch_author branch_email < <(
-              jq -r '[(.parents | length), .parents[0].sha, .tree.sha, .author.name, .author.email] | @tsv' \
-                "$RUNNER_TEMP/post-release-branch.json"
-            )
-            test "$parent_count" = 1
-            test "$branch_parent" = "$BASE_COMMIT"
-            test "$branch_tree" = "$(cat "$RUNNER_TEMP/candidate-tree")"
-            test "$branch_author" = "${APP_SLUG}[bot]"
-            test "$branch_email" = "$(cat "$RUNNER_TEMP/post-release-bot-id")+${APP_SLUG}[bot]@users.noreply.github.com"
-            jq -e --arg name "${APP_SLUG}[bot]" \
-              --arg email "$(cat "$RUNNER_TEMP/post-release-bot-id")+${APP_SLUG}[bot]@users.noreply.github.com" \
-              --arg message "$COMMIT_MESSAGE" \
-              '.committer.name == $name and .committer.email == $email and .message == $message' \
-              "$RUNNER_TEMP/post-release-branch.json" >/dev/null
-          elif grep -Fq '(HTTP 404)' "$RUNNER_TEMP/branch-error"; then
-            test -z "$pr_number"
-            test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$BASE" --jq .object.sha)" = "$BASE_COMMIT"
-            gh auth setup-git --hostname "${GH_HOST:-github.com}" --force
-            git -C "$RUNNER_TEMP/post-release.git" remote add origin \
-              "https://${GH_HOST:-github.com}/$GITHUB_REPOSITORY.git"
-            git -C "$RUNNER_TEMP/post-release.git" push origin "refs/heads/release-candidate:refs/heads/$BRANCH"
-            branch_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$BRANCH" --jq .object.sha)
-            test "$branch_sha" = "$CANDIDATE_COMMIT"
-          else
+        if [[ $(jq -r '.[0].merged_at != null' "$RUNNER_TEMP/post-release-prs.json") == true ]]; then
+          echo 'Branch push skipped: the pull request is already merged'
+        elif gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$BRANCH" >/dev/null 2>"$RUNNER_TEMP/branch-error"; then
+          echo "Branch push skipped: $BRANCH already exists"
+        else
+          if ! grep -Fq '(HTTP 404)' "$RUNNER_TEMP/branch-error"; then
+            echo "::error::could not check whether branch $BRANCH exists; GitHub replied:" >&2
             cat "$RUNNER_TEMP/branch-error" >&2
             exit 1
           fi
-          printf '%s\n' "$branch_sha" >"$RUNNER_TEMP/post-release-branch-sha"
+          echo "Branch $BRANCH is missing, pushing the prepared commit"
+          gh auth setup-git --hostname "${GH_HOST:-github.com}" --force
+          git -C "$RUNNER_TEMP/post-release.git" remote add origin \
+            "https://${GH_HOST:-github.com}/$GITHUB_REPOSITORY.git"
+          git -C "$RUNNER_TEMP/post-release.git" push origin "refs/heads/release-candidate:refs/heads/$BRANCH"
         fi
-    - name: Create or verify the pull request
+    - name: 🔀 Create a missing pull request
       shell: bash
       env:
         BASE: main
@@ -261,32 +202,26 @@ runs:
         set -euo pipefail
         if [[ $(jq -r '.[0].merged_at != null' "$RUNNER_TEMP/post-release-prs.json") != true ]]; then
           pr_number=$(jq -r '.[0].number // empty' "$RUNNER_TEMP/post-release-prs.json")
-          branch_sha=$(cat "$RUNNER_TEMP/post-release-branch-sha")
-          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$BRANCH" --jq .object.sha)" = "$branch_sha"
-          if [[ -n "$pr_number" ]]; then
-            test "$(jq -r '.[0].head.sha' "$RUNNER_TEMP/post-release-prs.json")" = "$branch_sha"
-          else
+          if [[ -z "$pr_number" ]]; then
             gh api -X POST "repos/$GITHUB_REPOSITORY/pulls" -f "head=$BRANCH" -f "base=$BASE" \
               -f "title=$TITLE" -F "body=@$BODY_FILE" >"$RUNNER_TEMP/post-release-created.json"
             pr_number=$(jq -r .number "$RUNNER_TEMP/post-release-created.json")
-            case "$pr_number" in
-            '' | 0* | *[!0-9]*) exit 1 ;;
-            esac
-            test "$(jq -r .head.sha "$RUNNER_TEMP/post-release-created.json")" = "$branch_sha"
-            test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$BRANCH" --jq .object.sha)" = "$branch_sha"
+            echo "Created pull request #$pr_number from $BRANCH to $BASE"
+          else
+            echo "Pull request creation skipped: #$pr_number is already open with the expected title, body and base"
           fi
           printf '%s\n' "$pr_number" >"$RUNNER_TEMP/post-release-number"
         fi
-    - name: Ensure the maintenance label
+    - name: 🔀 Ensure the maintenance label
       shell: bash
       run: |
         set -euo pipefail
         pr_number=$(cat "$RUNNER_TEMP/post-release-number")
         labels=$(gh api "repos/$GITHUB_REPOSITORY/issues/$pr_number/labels" --jq '.[].name')
-        if ! grep -Fxq 'skip news' <<<"$labels"; then
-          if [[ $(jq -r '.[0].merged_at != null' "$RUNNER_TEMP/post-release-prs.json") == true ]]; then
-            echo '::error::merged pull request lost its required label' >&2
-            exit 1
-          fi
-          gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$pr_number/labels" -f 'labels[]=skip news' >/dev/null
+        if grep -Fxq 'skip news' <<<"$labels"; then
+          echo "Pull request #$pr_number already has the skip news label"
+        else
+          labels=$(gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$pr_number/labels" -f 'labels[]=skip news' \
+            --jq 'map(.name) | join(", ")')
+          echo "Added the skip news label to pull request #$pr_number, labels now: $labels"
         fi

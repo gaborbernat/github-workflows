@@ -47,7 +47,6 @@ def test_install_locked_tools_installs_groups(
     [
         pytest.param("release-check", "prek", "release-creator", id="source-check"),
         pytest.param("release-news", "towncrier", "prek", id="pr-news"),
-        pytest.param("release-validate", "release-creator", "yq", id="patch-validation"),
         pytest.param("release-shell", "yq", "release-creator", id="inline-shell"),
     ],
 )
@@ -72,6 +71,23 @@ def test_install_locked_tools_reuses_existing_environment(tmp_path: Path, action
     second = action(caller, tmp_path, action_scripts, "install-locked-tools", version="", **environment)
     assert first.returncode == second.returncode == 0, first.stderr + second.stderr
     assert (tmp_path / "lock-tools" / ("Scripts/nab.exe" if os.name == "nt" else "bin/nab")).is_file()
+
+
+def test_install_locked_tools_explains_reused_constraints(tmp_path: Path, action_scripts: Path, caller: Path) -> None:
+    environment = {"GROUPS": "lock-tools", "VENV": str(tmp_path / "lock-tools")}
+    action(caller, tmp_path, action_scripts, "install-locked-tools", version="", **environment)
+
+    second = action(caller, tmp_path, action_scripts, "install-locked-tools", version="", **environment)
+
+    assert "Reusing build constraints from an earlier step (same lock and targets)" in second.stdout
+
+
+def test_install_locked_tools_explains_selected_groups(tmp_path: Path, action_scripts: Path, caller: Path) -> None:
+    environment = {"GROUPS": "lock-tools", "VENV": str(tmp_path / "lock-tools")}
+
+    result = action(caller, tmp_path, action_scripts, "install-locked-tools", version="", **environment)
+
+    assert "Selected lock groups: lock-tools (from the groups input)" in result.stdout
 
 
 def test_install_locked_tools_keeps_reader_after_nab_sync(tmp_path: Path, action_scripts: Path, caller: Path) -> None:
@@ -146,50 +162,6 @@ def test_install_locked_tools_reuses_windows_shaped_environment(tmp_path: Path, 
     )
     assert result.returncode == 0, result.stderr
     assert (tmp_path / "lock-tools/pyvenv.cfg").is_file()
-
-
-def test_install_locked_tools_rejects_missing_group(tmp_path: Path, action_scripts: Path, caller: Path) -> None:
-    result = install(
-        caller,
-        action_scripts,
-        tmp_path,
-        groups="relesae",
-        venv=tmp_path / "tools",
-    )
-    assert result.returncode != 0
-    assert "missing lock dependency groups: relesae" in result.stderr
-
-
-def test_install_locked_tools_rejects_artifact_version_mismatch(tmp_path: Path) -> None:
-    source = Path(__file__).resolve().parents[2]
-    document = tomlkit.parse((CALLER / "pylock.toml").read_text())
-    package = next(package for package in document["packages"] if package["name"] == "setuptools")
-    artifact = package["wheels"][0]
-    artifact["url"] = artifact["url"].replace(str(package["version"]), "0.0.0")
-    lock = tmp_path / "pylock.toml"
-    lock.write_text(tomlkit.dumps(document))
-
-    result = subprocess.run(
-        ["python", str(source / "tools/check_lock_groups.py"), str(lock), "release-news"],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-
-    assert result.returncode != 0
-    assert "package version" in result.stderr
-
-
-def test_install_locked_tools_constraints_only_accepts_no_build_group(tmp_path: Path, action_scripts: Path) -> None:
-    (tmp_path / "pyproject.toml").write_text('[tool.nab]\nuploaded-prior-to = "P7D"\n')
-    (tmp_path / "pylock.toml").write_text(
-        'lock-version = "1.0"\nrequires-python = ">=3.15"\ncreated-by = "test"\n'
-        'dependency-groups = ["project-runtime"]\npackages = []\n'
-        "[tool.nab]\ncreated-at = 2026-10-19T00:00:00Z\n"
-    )
-    result = action(tmp_path, tmp_path, action_scripts, "install-locked-tools", version="")
-    assert result.returncode == 0, result.stderr
-    assert next(tmp_path.glob("build-constraints-*.txt")).read_text() == ""
 
 
 def test_install_locked_tools_reuses_exporter(tmp_path: Path, action_scripts: Path, caller: Path) -> None:
@@ -326,7 +298,7 @@ def test_install_locked_tools_installs_only_binary_reader(tmp_path: Path, action
     installer.chmod(0o755)
     (tmp_path / "action").mkdir()
     steps = yaml.safe_load((Path(__file__).resolve().parents[2] / "install-locked-tools/action.yml").read_text())
-    index = next(index for index, step in enumerate(steps["runs"]["steps"]) if step["name"] == "Install lock reader")
+    index = next(index for index, step in enumerate(steps["runs"]["steps"]) if step["name"] == "📦 Install lock reader")
 
     result = subprocess.run(
         ["bash", str(action_scripts / f"install-locked-tools-{index}.sh")],

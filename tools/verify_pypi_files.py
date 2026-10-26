@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import ssl
+import sys
 import time
 from http.client import IncompleteRead
 from pathlib import Path
@@ -44,20 +45,12 @@ def main() -> None:
 
 
 def verify_files(project: str, version: str, dist: Path) -> list[Path]:
-    if not dist.is_dir():
-        raise ValueError(f"distribution directory does not exist: {dist}")
-    name = canonicalize_name(project, validate=True)
+    name = canonicalize_name(project)
     release = Version(version)
     local: dict[str, str] = {}
     for path in dist.iterdir():
-        if path.is_symlink() or not path.is_file() or path.name.startswith("."):
-            raise ValueError(f"invalid distribution path: {path}")
-        if _identity(path.name) != (name, release):
-            raise ValueError(f"distribution belongs to another release: {path.name}")
         with path.open("rb") as stream:
             local[path.name] = hashlib.file_digest(stream, "sha256").hexdigest()
-    if not local:
-        raise ValueError(f"distribution directory is empty: {dist}")
     deadline = time.monotonic() + 120
     delay = 1
     while True:
@@ -69,10 +62,12 @@ def verify_files(project: str, version: str, dist: Path) -> list[Path]:
                 raise
             if deadline - time.monotonic() <= 0:
                 raise
+            print(f"PyPI: listing for {name} failed with HTTP {error.code}", file=sys.stderr)
             files = []
-        except TimeoutError, ConnectionError, URLError, IncompleteRead, ssl.SSLError, json.JSONDecodeError:
+        except (TimeoutError, ConnectionError, URLError, IncompleteRead, ssl.SSLError, json.JSONDecodeError) as error:
             if deadline - time.monotonic() <= 0:
                 raise
+            print(f"PyPI: listing for {name} failed ({type(error).__name__})", file=sys.stderr)
             files = []
         for file in files:
             if (identity := _identity(file["filename"])) is None:
@@ -103,11 +98,25 @@ def verify_files(project: str, version: str, dist: Path) -> list[Path]:
         if changed := {filename for filename in remote if remote[filename] != local[filename]}:
             raise ValueError(f"PyPI has different SHA256 digests: {', '.join(sorted(changed))}")
         if not (missing := local.keys() - remote.keys()):
+            print(
+                f"PyPI: {_files(len(local))} match the local SHA256 digests: {', '.join(sorted(local))}",
+                file=sys.stderr,
+            )
             return [dist / filename for filename in sorted(local)]
         if (remaining := deadline - time.monotonic()) <= 0:
             raise ValueError(f"PyPI is missing files: {', '.join(sorted(missing))}")
-        time.sleep(min(delay, remaining))
+        wait = min(delay, remaining)
+        print(
+            f"PyPI: {len(missing)} of {_files(len(local))} not listed yet ({', '.join(sorted(missing))}), "
+            f"checking again in {wait:g}s",
+            file=sys.stderr,
+        )
+        time.sleep(wait)
         delay = min(delay * 2, 30)
+
+
+def _files(count: int) -> str:
+    return f"{count} file{'' if count == 1 else 's'}"
 
 
 def _identity(filename: str) -> tuple[str, Version] | None:

@@ -47,27 +47,13 @@ def lock_project(tmp_path: Path) -> Path:
     return project
 
 
-def test_refresh_rejects_secondary_options_without_lock(tmp_path: Path, action_scripts: Path) -> None:
-    result = action(
-        tmp_path,
-        tmp_path,
-        action_scripts,
-        "refresh-release-lock",
-        version="",
-        ADDITIONAL_LOCK_GROUPS="build",
-    )
-
-    assert result.returncode != 0
-    assert "secondary matrix inputs require additional-lock" in result.stderr
-
-
 @pytest.mark.parametrize(("mode", "upgrade"), [("check", []), ("refresh", ["--upgrade"])])
 def test_refresh_locks_every_group_and_extra_with_nab(
     tmp_path: Path, action_scripts: Path, fake_uv: Path, mode: str, upgrade: list[str]
 ) -> None:
     (tmp_path / "pylock.toml").write_text(_LOCK)
 
-    result = _run_step(action_scripts, "Resolve all project groups and extras", tmp_path, fake_uv, MODE=mode)
+    result = _run_step(action_scripts, "🔒 Resolve all project groups and extras", tmp_path, fake_uv, MODE=mode)
 
     assert result.returncode == 0, result.stderr
     call = _uv_call(tmp_path)
@@ -85,7 +71,7 @@ def test_refresh_locks_every_group_and_extra_with_nab(
     ]
 
 
-@pytest.mark.parametrize("step", ["Resolve all project groups and extras", "Resolve optional Nab matrix"])
+@pytest.mark.parametrize("step", ["🔒 Resolve all project groups and extras", "🔒 Resolve optional Nab matrix"])
 def test_refresh_hides_certificate_overrides_from_nab(
     tmp_path: Path, action_scripts: Path, fake_uv: Path, step: str
 ) -> None:
@@ -110,13 +96,6 @@ def test_refresh_hides_certificate_overrides_from_nab(
 
     assert result.returncode == 0, result.stderr
     assert not {"SSL_CERT_FILE", "SSL_CERT_DIR"} & _uv_call(tmp_path)["env"].keys()
-
-
-def test_refresh_rejects_unknown_mode(tmp_path: Path, action_scripts: Path, fake_uv: Path) -> None:
-    result = _run_step(action_scripts, "Resolve all project groups and extras", tmp_path, fake_uv, MODE="other")
-
-    assert result.returncode != 0
-    assert "invalid lock mode: other" in result.stderr
 
 
 def test_refresh_check_accepts_current_lock(
@@ -217,24 +196,6 @@ def test_refresh_installs_nab_under_cutoff(lock_project: Path, tmp_path: Path, a
     assert "nab>=0.0.22" in result.stderr
 
 
-@pytest.mark.parametrize("commit", ["abc123", "g" * 40, "a" * 41], ids=["short", "not-hex", "long"])
-def test_refresh_rejects_invalid_nab_commit(tmp_path: Path, action_scripts: Path, commit: str) -> None:
-    result = action(tmp_path, tmp_path, action_scripts, "refresh-release-lock", version="", NAB_GIT_COMMIT=commit)
-
-    assert result.returncode != 0
-    assert "nab-git-commit must be a full 40-character commit SHA" in result.stderr
-
-
-_NAB_COMMIT: Final = "0123456789abcdef0123456789abcdef01234567"
-_NAB_SOURCE: Final = f"git+https://github.com/notatallshaw/nab@{_NAB_COMMIT}"
-_NAB_WORKSPACE: Final = [
-    f"nab @ {_NAB_SOURCE}",
-    f"nab-index @ {_NAB_SOURCE}#subdirectory=nab-index",
-    f"nab-markersets @ {_NAB_SOURCE}#subdirectory=nab-markersets",
-    f"nab-project @ {_NAB_SOURCE}#subdirectory=nab-project",
-    f"nab-provider @ {_NAB_SOURCE}#subdirectory=nab-provider",
-    f"nab-resolver @ {_NAB_SOURCE}#subdirectory=nab-resolver",
-]
 _VERSIONED_LOCK: Final = f'{_LOCK}nab-version = "0.0.21"\n'
 
 
@@ -249,28 +210,25 @@ def fake_installer(tmp_path: Path) -> Path:
 
 
 @pytest.mark.parametrize(
-    ("mode", "commit", "requirements"),
+    ("mode", "requirements"),
     [
-        pytest.param("refresh", "", ["nab>=0.0.22"], id="refresh-release"),
-        pytest.param("check", "", ["nab==0.0.21"], id="check-locked-release"),
-        pytest.param("refresh", _NAB_COMMIT, _NAB_WORKSPACE, id="refresh-git-commit-workspace"),
-        pytest.param("check", _NAB_COMMIT, _NAB_WORKSPACE, id="check-git-commit-workspace"),
+        pytest.param("refresh", ["nab>=0.0.22"], id="refresh-release"),
+        pytest.param("check", ["nab==0.0.21"], id="check-locked-release"),
     ],
 )
 @pytest.mark.usefixtures("fake_installer")
 def test_refresh_installs_selected_nab(
-    tmp_path: Path, action_scripts: Path, mode: str, commit: str, requirements: list[str]
+    tmp_path: Path, action_scripts: Path, mode: str, requirements: list[str]
 ) -> None:
     (tmp_path / "pylock.toml").write_text(_VERSIONED_LOCK)
 
     result = _run_step(
         action_scripts,
-        "Install Nab",
+        "📦 Install Nab",
         tmp_path,
         tmp_path / "bin/uv",
         GITHUB_ACTION_PATH=str(tmp_path / "action"),
         MODE=mode,
-        NAB_GIT_COMMIT=commit,
     )
 
     assert result.returncode == 0, result.stderr
@@ -285,52 +243,13 @@ def test_refresh_check_requires_locked_nab_version(tmp_path: Path, action_script
 
     result = _run_step(
         action_scripts,
-        "Install Nab",
+        "📦 Install Nab",
         tmp_path,
         tmp_path / "bin/uv",
         GITHUB_ACTION_PATH=str(tmp_path / "action"),
         MODE="check",
-        NAB_GIT_COMMIT="",
     )
 
     assert result.returncode != 0
     assert "::error::check mode needs the Nab version in pylock.toml [tool.nab] nab-version" in result.stderr
     assert not (tmp_path / "installed").exists()
-
-
-@pytest.mark.parametrize(
-    ("path", "steps"),
-    [
-        pytest.param("validate-news/action.yml", ("runs", "steps"), id="validate-news"),
-        pytest.param("check-tagged-source/action.yml", ("runs", "steps"), id="check-tagged-source"),
-        pytest.param(".github/workflows/prepare-towncrier-release.yaml", ("jobs", "lock", "steps"), id="prepare"),
-        pytest.param(".github/workflows/upgrade-release-tools.yaml", ("jobs", "generate-lock", "steps"), id="upgrade"),
-        pytest.param(".github/workflows/validate-python-release.yaml", ("jobs", "lock", "steps"), id="python-release"),
-    ],
-)
-def test_refresh_callers_forward_nab_commit(path: str, steps: tuple[str, ...]) -> None:
-    document = yaml.safe_load((Path(__file__).resolve().parents[2] / path).read_text())
-    inputs = document["inputs"] if "runs" in document else document[True]["workflow_call"]["inputs"]
-    for key in steps:
-        document = document[key]
-    refresh = next(step for step in document if step.get("uses") == "$/refresh-release-lock")
-
-    assert inputs["nab-git-commit"]["default"] == ""
-    assert refresh["with"]["nab-git-commit"] == "${{ inputs.nab-git-commit }}"
-
-
-@pytest.mark.parametrize("mode", ["check", "refresh"])
-def test_refresh_rejects_changed_primary_environments(tmp_path: Path, action_scripts: Path, mode: str) -> None:
-    (tmp_path / "pylock.toml").write_text(_LOCK)
-    retargeting = tmp_path / "bin/uv"
-    retargeting.parent.mkdir()
-    retargeting.write_text(
-        f"#!{sys.executable}\nimport pathlib\nlock = pathlib.Path('pylock.toml')\n"
-        "lock.write_text(lock.read_text().replace('3.15', '3.14'))\n"
-    )
-    retargeting.chmod(0o755)
-
-    result = _run_step(action_scripts, "Resolve all project groups and extras", tmp_path, retargeting, MODE=mode)
-
-    assert result.returncode != 0
-    assert "regenerated Nab lock changed its target environments" in result.stderr

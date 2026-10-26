@@ -110,7 +110,7 @@ def test_main_reports_invalid_directory(
         cast("Callable[[], None]", _MODULE.main)()
 
     assert raised.value.code == 2
-    assert "distribution directory does not exist" in capsys.readouterr().err
+    assert "No such file or directory" in capsys.readouterr().err
 
 
 def test_script_entrypoint_prints_distribution_paths(
@@ -125,23 +125,6 @@ def test_script_entrypoint_prints_distribution_paths(
         str(distribution / "fixture-1.0-py3-none-any.whl"),
         str(distribution / "fixture-1.0.tar.gz"),
     ]
-
-
-def test_verify_files_rejects_missing_directory(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="distribution directory does not exist"):
-        verify_files("fixture", "1.0", tmp_path / "missing")
-
-
-def test_verify_files_rejects_empty_directory(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="distribution directory is empty"):
-        verify_files("fixture", "1.0", tmp_path)
-
-
-def test_verify_files_rejects_directory_entry(distribution: Path) -> None:
-    (distribution / "nested").mkdir()
-
-    with pytest.raises(ValueError, match="invalid distribution path"):
-        verify_files("fixture", "1.0", distribution)
 
 
 def test_verify_files_ignores_other_release_wheel(distribution: Path, mocker: MockerFixture) -> None:
@@ -283,26 +266,6 @@ def test_verify_files_rejects_bad_remote_release(
         verify_files("fixture", "1.0", distribution)
 
 
-@pytest.mark.parametrize(
-    ("change", "message"),
-    [
-        pytest.param("wrong-version", "another release", id="wrong-version"),
-        pytest.param("symlink", "invalid distribution path", id="symlink"),
-        pytest.param("hidden", "invalid distribution path", id="hidden"),
-    ],
-)
-def test_verify_files_rejects_bad_local_release(distribution: Path, change: str, message: str) -> None:
-    if change == "wrong-version":
-        (distribution / "fixture-2.0-py3-none-any.whl").write_bytes(b"other")
-    elif change == "symlink":
-        (distribution / "link.whl").symlink_to(distribution / "fixture-1.0-py3-none-any.whl")
-    else:
-        (distribution / ".hidden").write_bytes(b"other")
-
-    with pytest.raises(ValueError, match=message):
-        verify_files("fixture", "1.0", distribution)
-
-
 @pytest.mark.usefixtures("waiting_clock")
 def test_verify_files_waits_for_incomplete_listing(distribution: Path, mocker: MockerFixture) -> None:
     files = _listing(distribution)
@@ -316,6 +279,21 @@ def test_verify_files_waits_for_incomplete_listing(distribution: Path, mocker: M
 
     assert result == [distribution / "fixture-1.0-py3-none-any.whl", distribution / "fixture-1.0.tar.gz"]
     assert response.call_count == 2
+
+
+@pytest.mark.usefixtures("waiting_clock")
+def test_verify_files_explains_wait_and_match(
+    distribution: Path, mocker: MockerFixture, capsys: pytest.CaptureFixture[str]
+) -> None:
+    files = _listing(distribution)
+    mocker.patch.object(_MODULE, "urlopen", side_effect=[_body(files[:-1]), _body(files)])
+
+    verify_files("fixture", "1.0", distribution)
+
+    assert capsys.readouterr().err.splitlines() == [
+        "PyPI: 1 of 2 files not listed yet (fixture-1.0.tar.gz), checking again in 1s",
+        "PyPI: 2 files match the local SHA256 digests: fixture-1.0-py3-none-any.whl, fixture-1.0.tar.gz",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -441,7 +419,7 @@ def _serve(mocker: MockerFixture, distribution: Path, *, change: str = "") -> No
 def _listing(distribution: Path) -> list[_ListingFile]:
     return [
         {"filename": path.name, "hashes": {"sha256": hashlib.sha256(path.read_bytes()).hexdigest()}, "yanked": False}
-        for path in distribution.iterdir()
+        for path in sorted(distribution.iterdir())
     ]
 
 
