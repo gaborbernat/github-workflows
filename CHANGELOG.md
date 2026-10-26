@@ -2,6 +2,131 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-6-0-0"></a>
+
+## 6.0.0 (2026-10-26)
+
+<a name="release-6-0-0-added"></a>
+
+### Added
+
+- Every Action and reusable workflow now logs the choices it makes and why, and no longer hides tool output
+  ([#23](https://github.com/tox-dev/github-workflows/pull/23)) by [@gaborbernat](https://github.com/gaborbernat).
+- Run each `validate-news` check only when the pull request touches what it validates: fragment validation when the
+  fragment directory changes, the Towncrier configuration check when `towncrier.toml` or the `tool.towncrier` table
+  changes, the lock check when a `pyproject.toml`, `pylock.toml`, root `pylock.*.toml`, or `nab.toml` changes, and the
+  lock-removal guard when `pylock.toml` is deleted. Workflow changes no longer trigger the lock check, and every root
+  `pylock.*.toml` does, whether or not it is the configured `additional-lock`. The fragment requirement for human pull
+  requests still runs on every pull request ([#23](https://github.com/tox-dev/github-workflows/pull/23)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+
+<a name="release-6-0-0-changes"></a>
+
+### Changes
+
+- Drop the `main` branch condition from the writer job of `upgrade-release-tools.yaml`. The deployment branch rule of
+  the `release-auth` environment still applies ([#23](https://github.com/tox-dev/github-workflows/pull/23)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Drop the `source` job of the github-workflows release workflow, which re-checked the tag that started it
+  ([#23](https://github.com/tox-dev/github-workflows/pull/23)) by [@gaborbernat](https://github.com/gaborbernat).
+- Give every job and step in the shared workflows and Actions a name that starts with an emoji. Jobs of the reusable
+  workflows show up in callers as `<caller job> / <job name>`, so required status checks that name them must be updated.
+  `publish-jetbrains-marketplace` also recognizes a prior upload step named `🚀 Publish signed ZIP`, the README's new
+  name for the caller's publishing step ([#23](https://github.com/tox-dev/github-workflows/pull/23)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Make `publish-github-release` update an existing draft's title, notes, and prerelease flag on a rerun instead of
+  failing, use the first Release when several share the tag, and create the draft in `publish` mode when none exists. It
+  no longer compares the title, notes, and prerelease flag of an existing Release; the read-after-write retry and the
+  asset name and digest checks stay ([#23](https://github.com/tox-dev/github-workflows/pull/23)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Stop `commit-and-tag` from requiring a clean working tree with only a staged patch; it commits whatever is staged
+  ([#23](https://github.com/tox-dev/github-workflows/pull/23)) by [@gaborbernat](https://github.com/gaborbernat).
+- Stop `publish-jetbrains-marketplace` from inspecting earlier `release` environment deployments for the tag before an
+  upload; the job no longer needs Deployments read access. Stop `publish-post-release-pr` from failing when an open pull
+  request's title, body, or base changed, when several pull requests match, or when a merged pull request lost its
+  `skip news` label; it re-applies the label instead ([#23](https://github.com/tox-dev/github-workflows/pull/23)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Stop `refresh-release-lock` from failing in `refresh` mode when the regenerated lock targets different environments.
+  `check` mode still compares the whole lock ([#23](https://github.com/tox-dev/github-workflows/pull/23)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Stop checking the shape of built artifacts that the release jobs produce themselves. `validate-python-release.yaml` no
+  longer requires an empty `dist` directory or exactly one wheel and one sdist at the tag's version, and
+  `build-python-distribution` no longer requires an empty `dist` directory. `reconcile-pypi-artifacts` no longer rejects
+  an empty `dist`, an invalid project name, or local files that are hidden, symbolic links, directories, or belong to
+  another release; it compares every file in `dist` with PyPI
+  ([#23](https://github.com/tox-dev/github-workflows/pull/23)) by [@gaborbernat](https://github.com/gaborbernat).
+- Stop re-checking files the release jobs produce themselves in the JetBrains Actions. `sign-jetbrains-plugin` no longer
+  runs `unzip -t` on the unsigned or signed ZIP, checks for Java 17 or an existing signed ZIP, runs the signer's
+  `verify`, or checks the signed ZIP's type and members. `publish-jetbrains-marketplace` no longer runs `unzip -t`,
+  re-hashes the upload copy, or checks the file types of a downloaded receipt and earlier artifacts
+  ([#23](https://github.com/tox-dev/github-workflows/pull/23)) by [@gaborbernat](https://github.com/gaborbernat).
+- Stop re-checking the release tag before publishing. `publish-github-release` no longer requires the remote tag to
+  resolve to `commit`, which now only sets the target of a new Release. `publish-jetbrains-marketplace` no longer
+  requires the remote tag to target `commit` or fails on an earlier upload of the tag from another commit. Drop the step
+  that re-checks the tag before `publish-github-release` from callers that copied the README example
+  ([#23](https://github.com/tox-dev/github-workflows/pull/23)) by [@gaborbernat](https://github.com/gaborbernat).
+- Stop validating caller input in the prepare and tag Actions. `prepare-towncrier` no longer rejects an unknown `phase`,
+  a `finalize` run without `version`, a `changelog-prefix` other than empty or `v`, an explicit `version` that is not
+  newer than existing tags, other hook configuration files, or an unknown changelog format; any changelog not ending in
+  `.rst` is formatted with `mdformat`. `read-towncrier-config` no longer checks that the paths are normalized and inside
+  the repository, that the changelog ends in `.md` or `.rst`, or that fragment categories are configured.
+  `select-previous-tag` no longer requires the tag to exist locally or limits it to one namespace separator, and
+  `commit-and-tag` no longer rejects an empty `token` or `app-slug` or an `annotated` value other than `true` or
+  `false`; any value other than `true` creates a lightweight tag
+  ([#23](https://github.com/tox-dev/github-workflows/pull/23)) by [@gaborbernat](https://github.com/gaborbernat).
+- Stop validating caller input in the publishing Actions. `publish-github-release` no longer rejects an empty tag,
+  title, or notes file, a `prerelease` other than `true` or `false`, an unknown `mode`, or asset directories with
+  hidden, non-regular, or unusually named entries. `publish-jetbrains-marketplace` no longer checks the archive name and
+  type, the plugin ID, the channel, the tag ref, the notes file type, the artifact IDs, or that `publish-token` is set.
+  `sign-jetbrains-plugin` no longer checks the archive name and type, and `publish-post-release-pr` no longer checks the
+  format of its inputs or the `allowed-paths` entries ([#23](https://github.com/tox-dev/github-workflows/pull/23)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+
+<a name="release-6-0-0-breaking-changes"></a>
+
+### Breaking changes
+
+- Reduce `validate-release-patch` to applying the patch and checking its paths and file modes, and remove its `version`
+  and `checks` inputs; remove them from callers. It no longer rejects a `main` branch that moved, a patch that leaves
+  the changelog unchanged, or RST conflict markers, and it no longer runs `release-creator validate-fragment-deletions`,
+  `release-creator notes`, the hook configuration check, or `prek`
+  ([#23](https://github.com/tox-dev/github-workflows/pull/23)) by [@gaborbernat](https://github.com/gaborbernat).
+- Remove the `app-slug` and `commit-message` inputs from `publish-post-release-pr`; remove them from callers. The Action
+  no longer compares the candidate's author, committer, and message with the App bot and the expected message, re-reads
+  the branch, pull request head, or base after writing, or checks the files of an already merged pull request against
+  the current base ([#23](https://github.com/tox-dev/github-workflows/pull/23)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Remove the `check-tagged-source` Action, and stop checking the tag in `validate-python-release.yaml`: the workflow no
+  longer requires the tag to resolve to `GITHUB_SHA` or to sit on `main`, and checks out the tag with the default fetch
+  depth. Remove `check-tagged-source` steps from callers ([#23](https://github.com/tox-dev/github-workflows/pull/23)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Remove the `lock` job from `validate-python-release.yaml` and `prepare-towncrier-release.yaml`, and the lock check
+  from `check-tagged-source`. `validate-news` still checks the lock on the pull request that changes it. Both workflows
+  drop the `additional-lock`, `additional-lock-groups`, `additional-lock-selection`, `additional-matrix-python`,
+  `additional-matrix-platforms`, and `additional-matrix-implementations` inputs, and `check-tagged-source` drops them
+  along with `exclude-newer` and `exclude-newer-package`; remove them from callers. Without the `lock` job,
+  `prepare-towncrier-release.yaml` no longer skips a dispatch from a branch other than `main`
+  ([#23](https://github.com/tox-dev/github-workflows/pull/23)) by [@gaborbernat](https://github.com/gaborbernat).
+- Remove the `validate` job from `prepare-towncrier-release.yaml`, which recalculated the version and ran
+  `release-creator` and `prek` on the patch that `assemble` had just produced; `push` now depends on `assemble` alone.
+  The workflow no longer installs the `release-validate` group
+  ([#23](https://github.com/tox-dev/github-workflows/pull/23)) by [@gaborbernat](https://github.com/gaborbernat).
+- Remove the `verify-lock` and `verify-groups` inputs from `install-locked-tools` and `verify-groups` from
+  `export-build-constraints`, together with the `check_lock_groups.py` check behind them; remove them from callers.
+  `install-locked-tools` no longer checks that the requested groups exist in the lock or requires `venv` with `groups`,
+  `export-build-constraints` no longer rejects an unknown platform, a malformed or empty target list, or targets that
+  select different build package versions, and `refresh-release-lock` and `upgrade-release-tools.yaml` no longer
+  validate `mode`, `additional-lock`, and the secondary matrix inputs
+  ([#23](https://github.com/tox-dev/github-workflows/pull/23)) by [@gaborbernat](https://github.com/gaborbernat).
+- Remove the temporary `nab-git-commit` input from `refresh-release-lock`, `validate-news`,
+  `prepare-towncrier-release.yaml`, `upgrade-release-tools.yaml`, and `validate-python-release.yaml`. The Actions always
+  install Nab from PyPI; remove the input from callers ([#23](https://github.com/tox-dev/github-workflows/pull/23)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Rename the jobs of `validate-python-release.yaml` to `🏗️ Build distributions` and of `prepare-towncrier-release.yaml`
+  to `🏷️ Assemble release` and `⬆️ Push release commit and tag`. Required status checks and rulesets that reference the
+  old job names must use the new ones ([#23](https://github.com/tox-dev/github-workflows/pull/23)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-5-0-2"></a>
 
 ## 5.0.2 (2026-10-26)
