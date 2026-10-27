@@ -2,6 +2,18 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-6-0-2"></a>
+
+## 6.0.2 (2026-10-27)
+
+<a name="release-6-0-2-changes"></a>
+
+### Changes
+
+- Admit the `[tool.nab]` per-package `uploaded-prior-to` exceptions in `cooled-prek` hook environments, so a hook
+  dependency pinned past the seven-day cutoff installs the same way as the release lock. Before, prepare failed on such
+  a pin ([#28](https://github.com/tox-dev/github-workflows/pull/28)) by [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-6-0-1"></a>
 
 ## 6.0.1 (2026-10-26)
