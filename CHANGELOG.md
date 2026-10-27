@@ -2,6 +2,19 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-6-2-1"></a>
+
+## 6.2.1 (2026-10-27)
+
+<a name="release-6-2-1-changes"></a>
+
+### Changes
+
+- `validate-news` reads the pull request's current labels from the API, so re-running an older Changelog run after
+  adding `skip news` passes instead of failing on the labels the original event carried. Callers grant
+  `pull-requests: read` to the job ([#35](https://github.com/tox-dev/github-workflows/pull/35)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-6-2-0"></a>
 
 ## 6.2.0 (2026-10-27)
