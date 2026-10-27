@@ -2,6 +2,19 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-6-1-0"></a>
+
+## 6.1.0 (2026-10-27)
+
+<a name="release-6-1-0-added"></a>
+
+### Added
+
+- `render-release-notes` takes one `artifact-url` per line, with matching `artifact-label` lines, so a project that
+  publishes several packages lists them all on one row of the GitHub Release. Release bodies now come from
+  `release-creator` 4.3.0, which marks each link with its ecosystem emoji
+  ([#32](https://github.com/tox-dev/github-workflows/pull/32)) by [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-6-0-3"></a>
 
 ## 6.0.3 (2026-10-27)
