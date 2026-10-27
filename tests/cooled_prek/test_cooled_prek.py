@@ -89,3 +89,42 @@ def test_cooled_prek_isolates_hook_installs(tmp_path: Path) -> None:
         "UV_NO_SOURCES": "1",
     }
     assert not leaked.keys() & environment.keys()
+
+
+def test_cooled_prek_admits_nab_cutoff_exceptions(tmp_path: Path) -> None:
+    fake = tmp_path / "prek"
+    fake.write_text('#!/bin/sh\ncat "$UV_CONFIG_FILE" >config\n')
+    fake.chmod(0o755)
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.nab]\nuploaded-prior-to = "P7D"\npackages.sphinx.uploaded-prior-to = 2026-10-21T00:05:13Z\n'
+        'packages.release-creator.uploaded-prior-to = "2026-10-26T18:24:46Z"\npackages.uv.decision-order = "stable"\n'
+    )
+
+    subprocess.run(
+        [str(Path(__file__).resolve().parents[2] / "tools/cooled_prek.sh"), "install-hooks"],
+        cwd=tmp_path,
+        env=os.environ | {"PATH": f"{tmp_path}:{os.environ['PATH']}"},
+        check=True,
+    )
+
+    assert (tmp_path / "config").read_text().splitlines() == [
+        "[exclude-newer-package]",
+        '"release-creator" = "2026-10-26T18:24:46Z"',
+        '"sphinx" = "2026-10-21T00:05:13Z"',
+    ]
+
+
+def test_cooled_prek_without_exceptions_sets_no_config_file(tmp_path: Path) -> None:
+    fake = tmp_path / "prek"
+    fake.write_text('#!/bin/sh\nprintf "%s" "${UV_CONFIG_FILE-unset}" >config\n')
+    fake.chmod(0o755)
+    (tmp_path / "pyproject.toml").write_text('[tool.nab]\nuploaded-prior-to = "P7D"\n')
+
+    subprocess.run(
+        [str(Path(__file__).resolve().parents[2] / "tools/cooled_prek.sh"), "install-hooks"],
+        cwd=tmp_path,
+        env=os.environ | {"PATH": f"{tmp_path}:{os.environ['PATH']}", "UV_CONFIG_FILE": "/leak/uv.toml"},
+        check=True,
+    )
+
+    assert (tmp_path / "config").read_text() == "unset"
