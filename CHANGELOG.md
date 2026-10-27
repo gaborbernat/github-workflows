@@ -2,6 +2,19 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-6-2-0"></a>
+
+## 6.2.0 (2026-10-27)
+
+<a name="release-6-2-0-changes"></a>
+
+### Changes
+
+- `publish-github-release` credits first-time contributors on the GitHub Release, taking the list from GitHub's
+  generated notes for the range since the previous tag and placing it above the package and comparison links.
+  `prepare-towncrier` no longer adds a New Contributors subsection to the changelog
+  ([#34](https://github.com/tox-dev/github-workflows/pull/34)) by [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-6-1-0"></a>
 
 ## 6.1.0 (2026-10-27)
