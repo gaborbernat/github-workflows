@@ -2,6 +2,18 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-6-0-3"></a>
+
+## 6.0.3 (2026-10-27)
+
+<a name="release-6-0-3-fixed"></a>
+
+### Fixed
+
+- Match release assets by the name GitHub stores, which replaces characters such as spaces with periods. A file named
+  `PyVenv Manage 2-2.4.7-signed.zip` uploaded, but its draft stayed unpublished because the check expected the local
+  name ([#29](https://github.com/tox-dev/github-workflows/pull/29)) by [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-6-0-2"></a>
 
 ## 6.0.2 (2026-10-27)
