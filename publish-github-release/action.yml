@@ -36,7 +36,9 @@ runs:
           shopt -s nullglob dotglob
           : >"$RUNNER_TEMP/release-assets.tsv"
           for asset in "$ASSETS_DIRECTORY"/*; do
+            # GitHub stores an uploaded asset under its file name with each other character replaced by a period.
             name=${asset##*/}
+            name=${name//[^A-Za-z0-9._+-]/.}
             printf '%s\tsha256:%s\n' "$name" "$(sha256sum "$asset" | cut -d' ' -f1)" \
               >>"$RUNNER_TEMP/release-assets.tsv"
           done
@@ -149,6 +151,7 @@ runs:
             present=0
             for asset in "$ASSETS_DIRECTORY"/*; do
               name=${asset##*/}
+              name=${name//[^A-Za-z0-9._+-]/.}
               if jq -e --arg name "$name" --slurpfile assets "$RUNNER_TEMP/release-assets.json" '
                 any(.[0].assets[]; .name == $name and .state == "uploaded" and
                   (.digest as $digest | any($assets[0][]; .name == $name and .digest == $digest)))

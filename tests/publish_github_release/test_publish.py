@@ -338,7 +338,8 @@ def test_draft_release_uploads_missing_asset(
     assets.mkdir()
     asset_path = assets / asset_name
     asset_path.write_bytes(b"release archive")
-    asset = {"name": asset_name, "digest": f"sha256:{sha256(b'release archive').hexdigest()}", "state": "uploaded"}
+    stored = asset_name.replace(" ", ".")
+    asset = {"name": stored, "digest": f"sha256:{sha256(b'release archive').hexdigest()}", "state": "uploaded"}
     draft = _release(notes, draft=True)
     complete = _release(notes, draft=True, assets=[asset])
     prefix = "/api/v3/repos/tox-dev/fixture"
