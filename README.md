@@ -165,6 +165,11 @@ Every shared `prek` command runs through `tools/cooled_prek.sh`, which the `cool
 passes `--config .pre-commit-config.yaml`. Without it, prek prefers a root `prek.toml` and also runs nested
 configurations, which no guard checks.
 
+Hook environments install under the same seven-day upload cutoff, with the repository's uv settings ignored. A package
+with a `packages.<name>.uploaded-prior-to` exception in `[tool.nab]` is admitted up to that date in hook environments
+too, so a hook dependency pinned to a release newer than the cutoff, such as `sphinx` for `docstrfmt`, needs the same
+temporary exception the release lock uses. Delete the exception once the release is a week old.
+
 ## Start with a caller
 
 The [release preparation workflow](.github/workflows/prepare-release.yaml) in this repository calls the reusable
