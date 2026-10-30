@@ -1045,7 +1045,7 @@ sha256 = "d76623373421df22fb4cf8817020cbb7ef15c725b9d5e45f17e189bfc384190f"
 
 [[packages]]
 name = "release-creator"
-version = "4.3.0"
+version = "4.3.1"
 marker = "\"release-prepare\" in dependency_groups or \"test\" in dependency_groups"
 requires-python = ">=3.15"
 dependencies = [
@@ -1058,14 +1058,23 @@ dependencies = [
 ]
 index = "https://pypi.org/simple/"
 
+[packages.sdist]
+name = "release_creator-4.3.1.tar.gz"
+upload-time = 2026-10-30 01:08:12.267181+00:00
+url = "https://files.pythonhosted.org/packages/71/40/23728468701e4ca7f1d98bc221c5cb99201be97340652691ccb228392ce5/release_creator-4.3.1.tar.gz"
+size = 170029
+
+[packages.sdist.hashes]
+sha256 = "e0b8076a639a375e2791d1cb754a9be95d86284e63f5bf83472cf1876fec49fc"
+
 [[packages.wheels]]
-name = "release_creator-4.3.0-py3-none-any.whl"
-upload-time = 2026-10-27 20:03:24.840699+00:00
-url = "https://files.pythonhosted.org/packages/c4/35/cb402853dd142441cbfca66439332ff190edb76dc2111bae3bf52fa67ed8/release_creator-4.3.0-py3-none-any.whl"
-size = 53455
+name = "release_creator-4.3.1-py3-none-any.whl"
+upload-time = 2026-10-30 01:08:10.960230+00:00
+url = "https://files.pythonhosted.org/packages/05/de/dbafaeb13ffccdedb09780428f6613e68cde95790ffb56d0e3a3ac217861/release_creator-4.3.1-py3-none-any.whl"
+size = 53994
 
 [packages.wheels.hashes]
-sha256 = "8d5a60d4b90fb772c73f106cce25c4dec9a658ef483b4223a5af4a9f4a6d5429"
+sha256 = "b661e8c86a51edaec8f768c8aa6061d462be8ff3151194aec3d53b69d2954efc"
 
 [[packages]]
 name = "setuptools"
@@ -1462,6 +1471,7 @@ command-line = [
     "lock",
     "--all-groups",
     "--all-extras",
+    "--no-cache",
 ]
 input-path = "pyproject.toml"
 mode = "universal"
