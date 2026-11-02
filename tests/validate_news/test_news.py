@@ -62,6 +62,7 @@ def test_validate_news_without_fragment(
     "name",
     [
         pytest.param("+addition.feature.md", id="named"),
+        pytest.param("addition.feature.md", id="bare-name"),
         pytest.param("+addition.feature.1.md", id="named-multiple"),
         pytest.param("123.feature.2.md", id="numbered-multiple"),
     ],
@@ -117,7 +118,6 @@ def test_validate_news_reads_rst_categories(
     ("name", "content", "error"),
     [
         pytest.param("+addition.unknown.md", "Add a feature.\n", "unsupported changelog fragment", id="category"),
-        pytest.param("addition.feature.md", "Add a feature.\n", "unsupported changelog fragment", id="name"),
         pytest.param("+addition.feature.x.md", "Add a feature.\n", "unsupported changelog fragment", id="ordinal"),
         pytest.param("+addition.feature.md", " \n", "empty changelog fragment", id="empty"),
     ],
