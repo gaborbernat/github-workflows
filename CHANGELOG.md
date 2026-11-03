@@ -2,6 +2,17 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-6-4-0"></a>
+
+## 6.4.0 (2026-11-03)
+
+<a name="release-6-4-0-added"></a>
+
+### Added
+
+- Repositories can publish OpenSSF Scorecard results through a shared workflow, including SARIF upload
+  ([#43](https://github.com/tox-dev/github-workflows/pull/43)) by [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-6-3-0"></a>
 
 ## 6.3.0 (2026-11-02)
