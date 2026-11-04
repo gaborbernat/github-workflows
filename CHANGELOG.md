@@ -2,6 +2,18 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-6-5-1"></a>
+
+## 6.5.1 (2026-11-04)
+
+<a name="release-6-5-1-fixed"></a>
+
+### Fixed
+
+- `build-maturin-wheels` passes `--interpreter` only for matrix entries that set `python`, so cross targets build again,
+  and it no longer enables sccache on Windows, where it broke MSVC builds of C dependencies
+  ([#47](https://github.com/tox-dev/github-workflows/pull/47)) by [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-6-5-0"></a>
 
 ## 6.5.0 (2026-11-04)
