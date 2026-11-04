@@ -290,6 +290,10 @@ generation run in the read-only job, before the artifact exists. The reusable wo
 **Output:** `number`, the pull request number. **Remote effect:** One force-pushed commit on `branch` and one pull
 request into `base`. An open pull request with the same branch is updated; two open pull requests on one branch fail.
 
+The `open` job refuses `pull_request`, `pull_request_target`, `workflow_run`, `issue_comment`, and `merge_group`
+callers. Its first step fails with an error that names the event, before the checkout and before the App token exists.
+Trigger the caller on `push`, `schedule`, `workflow_dispatch`, or `release`.
+
 ## Check pull request news
 
 `validate-news` reads `tool.towncrier` from `pyproject.toml`. It checks every added or modified fragment in the
@@ -641,6 +645,10 @@ uses `release-auth` without creating a GitHub Deployment. The caller can place r
 job and make this job depend on it. One dispatch prepares one tag; run separate dispatches for separate packages. The
 tag-triggered ecosystem publisher stays in the caller repository.
 
+The `push` job refuses `pull_request`, `pull_request_target`, `workflow_run`, `issue_comment`, and `merge_group`
+callers. Its first step fails with an error that names the event, before the patch is downloaded and before the App
+token exists. Trigger the caller on `push`, `schedule`, `workflow_dispatch`, or `release`.
+
 ## Read Towncrier configuration
 
 `read-towncrier-config` reads `towncrier.toml` or `pyproject.toml` from the checkout's committed `HEAD`, so an untrusted
@@ -818,6 +826,10 @@ What stays in the caller:
   shared changelog. Simplint's `assemble_release.py` and toml-fmt's package sections both stay in the caller.
 - Any Cargo or uv version change beyond `cargo-set-version`, such as `uv version --package` for a second Python package.
 - The tag-triggered publisher, which stays in the caller repository.
+
+The `push` job refuses `pull_request`, `pull_request_target`, `workflow_run`, `issue_comment`, and `merge_group`
+callers. Its first step fails with an error that names the event, before the patch is downloaded and before the App
+token exists. Trigger the caller on `push`, `schedule`, `workflow_dispatch`, or `release`.
 
 ## Validate a Python release
 
@@ -1003,6 +1015,10 @@ jobs:
 
 `release-notes.yaml` passes `package` to `render-release-notes`. The Action's `previous` input still defaults to `auto`,
 so callers need no separate `select-previous-tag` step.
+
+The `github-release` job refuses `pull_request`, `pull_request_target`, `workflow_run`, `issue_comment`, and
+`merge_group` callers. Its first step fails with an error that names the event, before any artifact is downloaded or the
+release is written. Trigger the caller on `push`, `schedule`, `workflow_dispatch`, or `release`.
 
 ## Render GitHub Release notes
 
@@ -1380,7 +1396,8 @@ the branch and creates the `v<version>` tag, then a GitHub release is created.
   succeeds with a notice. A different tree fails the run and names both trees. A published tag is never moved, because a
   moved tag changes the rev users have pinned; bump the package version to publish new content.
 - The job runs the repository's pre-commit hooks while it holds `contents: write`. Trigger it on pushes to `main`,
-  schedules, and manual dispatches, not on `pull_request`, so no pull request's hook code runs with that token.
+  schedules, and manual dispatches. It refuses `pull_request`, `pull_request_target`, `workflow_run`, `issue_comment`,
+  and `merge_group` callers before it checks out the repository, so no pull request's hook code runs with that token.
 
 ```yaml
 name: Mirror
@@ -1428,6 +1445,10 @@ jobs:
     with:
       root-file: main.tex
 ```
+
+The `deploy` job refuses `pull_request`, `pull_request_target`, `workflow_run`, `issue_comment`, and `merge_group`
+callers before it checks out the repository. It also runs only when the ref is `main`, so a `pull_request` trigger in
+the example builds the PDF without deploying it.
 
 ## Test a caller
 
