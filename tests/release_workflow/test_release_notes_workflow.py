@@ -61,6 +61,10 @@ def test_release_notes_default_changelog_comes_from_towncrier_config(workflow: J
     }
 
 
+def test_towncrier_config_is_read_only_without_changelog_input(workflow: JsonObject) -> None:
+    assert step(workflow, "notes", "⚙️ Read Towncrier configuration")["if"] == "inputs.changelog == ''"
+
+
 def test_release_notes_uploads_artifact_per_run_attempt(workflow: JsonObject) -> None:
     upload = step(workflow, "notes", "📤 Upload release notes")
 

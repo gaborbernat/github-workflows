@@ -871,7 +871,8 @@ workflow.
 `release-notes.yaml` takes these inputs and returns one output:
 
 - `tag` **(required)**: release tag, such as `1.2.3` or `pyproject-fmt/1.2.3`.
-- `changelog`: tracked changelog path. Empty reads `filename` from the committed Towncrier configuration.
+- `changelog`: tracked changelog path. Empty reads `filename` from the committed Towncrier configuration, so a
+  repository without one, such as a multi-package workspace, must set it.
 - `artifact-url` and `artifact-label`: passed to `render-release-notes`.
 - `package`: package section of a shared Markdown changelog. The previous tag is then the one before the tag in the same
   package namespace.

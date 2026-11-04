@@ -57,6 +57,7 @@ jobs:
           enable-cache: false
       - id: towncrier
         name: ⚙️ Read Towncrier configuration
+        if: inputs.changelog == ''
         uses: $/read-towncrier-config
       - name: 📦 Install locked release tools
         uses: $/install-locked-tools
