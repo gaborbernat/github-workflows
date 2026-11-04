@@ -159,7 +159,7 @@ jobs:
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.source.outputs.artifact-id }}
-      - name: 🐍 Install uv
+      - name: 🐍 Install uv and Python
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version: latest-known
@@ -187,14 +187,13 @@ jobs:
           if-no-files-found: error
   gate:
     name: 🚦 Build distributions pass
-    if: ${{ always() }}
+    if: ${{ !cancelled() }}
     needs: [source, build, sdist]
     runs-on: ubuntu-26.04
     permissions: {}
     steps:
-      - name: 🚦 Fail when a build job failed or was cancelled
-        env:
-          NEEDS_JSON: ${{ toJSON(needs) }}
-        run: |
-          set -euo pipefail
-          jq -e 'all(to_entries[]; .value.result == "success" or .value.result == "skipped")' <<<"$NEEDS_JSON"
+      - name: 🚦 Require all needed jobs to pass
+        uses: $/required-checks
+        with:
+          needs: ${{ toJSON(needs) }}
+          allow-skipped: sdist

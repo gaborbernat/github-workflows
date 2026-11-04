@@ -107,11 +107,11 @@ jobs:
             esac
             matched=false
             for pattern in "${patterns[@]}"; do
-              case "$path" in
-              $pattern)
+              # shellcheck disable=SC2053 # The patterns are globs, matched on purpose.
+              if [[ "$path" == $pattern ]]; then
                 matched=true
-                ;;
-              esac
+                break
+              fi
             done
             if [[ "$matched" != true ]]; then
               echo "::error::unexpected maintenance path: $path" >&2
@@ -205,11 +205,11 @@ jobs:
             esac
             matched=false
             for pattern in "${patterns[@]}"; do
-              case "$path" in
-              $pattern)
+              # shellcheck disable=SC2053 # The patterns are globs, matched on purpose.
+              if [[ "$path" == $pattern ]]; then
                 matched=true
-                ;;
-              esac
+                break
+              fi
             done
             if [[ "$matched" != true ]]; then
               echo "::error::unexpected maintenance path: $path" >&2
@@ -268,7 +268,7 @@ jobs:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           BASE: ${{ inputs.base }}
           BRANCH: ${{ inputs.branch }}
-          LABELS: ${{ inputs.labels }}
+          LABEL_LINES: ${{ inputs.labels }}
           TITLE: ${{ inputs.title }}
         run: |
           set -euo pipefail
@@ -288,7 +288,7 @@ jobs:
             if [[ -n "$label" ]]; then
               labels+=("$label")
             fi
-          done <<<"$LABELS"
+          done <<<"$LABEL_LINES"
           label_args=()
           for label in "${labels[@]}"; do
             label_args+=(--label "$label")

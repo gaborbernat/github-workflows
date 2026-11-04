@@ -30,6 +30,14 @@ on:
         description: Directory of extra GitHub Release assets; dist attaches the distributions
         default: ""
         type: string
+      exclude-newer:
+        description: Upload cutoff for the tools the shared Actions install from PyPI
+        default: 7 days
+        type: string
+      exclude-newer-package:
+        description: Newline-separated name=date cutoffs that override exclude-newer for single packages
+        default: ""
+        type: string
 permissions: {}
 jobs:
   github-release:
@@ -63,6 +71,8 @@ jobs:
           project: ${{ inputs.project }}
           version: ${{ inputs.version }}
           dist: dist
+          exclude-newer: ${{ inputs.exclude-newer }}
+          exclude-newer-package: ${{ inputs.exclude-newer-package }}
       - name: 🚀 Publish GitHub release
         uses: $/publish-github-release
         env:

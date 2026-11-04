@@ -85,6 +85,8 @@ jobs:
         with:
           groups: release-prepare
           venv: ${{ runner.temp }}/release-tools
+          exclude-newer: ${{ inputs.exclude-newer }}
+          exclude-newer-package: ${{ inputs.exclude-newer-package }}
       - id: inputs
         name: ⚙️ Validate inputs and set the cutoffs
         env:
@@ -215,6 +217,9 @@ jobs:
           done <"$RUNNER_TEMP/file-groups"
       - name: 🔒 Refresh release lock
         uses: $/refresh-release-lock
+        with:
+          exclude-newer: ${{ inputs.exclude-newer }}
+          exclude-newer-package: ${{ inputs.exclude-newer-package }}
       - name: 🧹 Run repository hooks
         continue-on-error: true
         uses: $/cooled-prek

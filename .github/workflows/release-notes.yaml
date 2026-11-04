@@ -22,6 +22,14 @@ on:
         description: Package section of a shared Markdown changelog; empty for one package
         default: ""
         type: string
+      exclude-newer:
+        description: Upload cutoff for the tools the shared Actions install from PyPI
+        default: 7 days
+        type: string
+      exclude-newer-package:
+        description: Newline-separated name=date cutoffs that override exclude-newer for single packages
+        default: ""
+        type: string
     outputs:
       artifact-id:
         description: Artifact ID of the rendered GitHub Release notes
@@ -55,6 +63,8 @@ jobs:
         with:
           groups: release-notes
           venv: ${{ runner.temp }}/release-tools
+          exclude-newer: ${{ inputs.exclude-newer }}
+          exclude-newer-package: ${{ inputs.exclude-newer-package }}
       - name: 📝 Render release notes
         uses: $/render-release-notes
         with:

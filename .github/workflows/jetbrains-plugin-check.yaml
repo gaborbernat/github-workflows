@@ -44,7 +44,7 @@ jobs:
         with:
           tool-cache: false
           large-packages: false
-      - name: 📥 Check out code
+      - name: 📥 Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -54,7 +54,7 @@ jobs:
           cache: false
       # The build feeds the signed release, so Gradle's cache stays off to keep a cached artifact out of it.
       - name: ☕ Set up Gradle
-        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0 # zizmor: ignore[cache-poisoning]
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           cache-disabled: true
       - name: 🏷️ Set plugin version
@@ -108,7 +108,7 @@ jobs:
           dotnet: true
           haskell: true
           docker-images: true
-      - name: 📥 Check out code
+      - name: 📥 Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -148,7 +148,7 @@ jobs:
         with:
           tool-cache: false
           large-packages: false
-      - name: 📥 Check out code
+      - name: 📥 Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -194,8 +194,6 @@ jobs:
     permissions: {}
     steps:
       - name: 🚦 Require all needed jobs to pass
-        env:
-          NEEDS_JSON: ${{ toJSON(needs) }}
-        run: |
-          jq -r 'to_entries[] | "Job \(.key): \(.value.result)"' <<<"$NEEDS_JSON"
-          jq -e 'all(to_entries[]; .value.result == "success")' <<<"$NEEDS_JSON"
+        uses: $/required-checks
+        with:
+          needs: ${{ toJSON(needs) }}

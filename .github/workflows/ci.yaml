@@ -2,8 +2,7 @@ name: Check
 on:
   pull_request:
     types: [opened, reopened, synchronize]
-permissions:
-  contents: read
+permissions: {}
 concurrency:
   group: check-${{ github.ref }}-${{ github.run_attempt > 1 && github.run_id || 'current' }}
   cancel-in-progress: ${{ github.run_attempt == 1 }}
@@ -110,7 +109,9 @@ jobs:
           cache-suffix: ${{ github.job }}
           cache-dependency-glob: pyproject.toml
       - name: 🧪 Run Action tests
-        run: uvx --with tox-uv tox run -e test
+        env:
+          EXCLUDE_NEWER: 7 days
+        run: uvx --exclude-newer "$EXCLUDE_NEWER" --with tox-uv tox run -e test
   type:
     name: 🔎 Type check
     runs-on: ubuntu-26.04
@@ -130,12 +131,15 @@ jobs:
           cache-suffix: ${{ github.job }}
           cache-dependency-glob: pyproject.toml
       - name: 🔎 Check Python types
-        run: uvx --with tox-uv tox run -e type
+        env:
+          EXCLUDE_NEWER: 7 days
+        run: uvx --exclude-newer "$EXCLUDE_NEWER" --with tox-uv tox run -e type
   gate:
     name: 🚦 Required checks pass
     if: ${{ !cancelled() }}
     needs: [check, shell, test, type]
     runs-on: ubuntu-26.04
+    permissions: {}
     steps:
       - name: 🚦 Require all needed jobs to pass
         uses: $/required-checks
