@@ -1,22 +1,17 @@
 """Fail when a Nab cutoff exception has no expiry comment or has passed its expiry."""
 
-from __future__ import annotations
-
 import argparse
 import re
 import sys
 import tomllib
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any, Final
-
-_EXPIRY: Final = re.compile(r"#\s*expires\s+(\d{4}-\d{2}-\d{2})")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("paths", nargs="+", type=Path)
-    paths = parser.parse_args().paths
+    paths = parser.parse_args(namespace=_Options()).paths
     today = datetime.now(UTC).date()
     try:
         problems = [problem for path in paths for problem in _problems(path, today)]
@@ -29,17 +24,21 @@ def main() -> None:
         sys.exit(1)
 
 
+class _Options(argparse.Namespace):
+    paths: list[Path]
+
+
 def _problems(path: Path, today: date) -> list[str]:
     text = path.read_text(encoding="utf-8")
     document = tomllib.loads(text)
-    config: dict[str, Any] = document.get("tool", {}).get("nab", {}) if path.name == "pyproject.toml" else document
-    lines = text.splitlines()
+    config = document.get("tool", {}).get("nab", {}) if path.name == "pyproject.toml" else document
     problems = [
         f"{path}: [[package-rules]] {rule.get('match')} sets uploaded-prior-to, which expiry is not checked for;"
         " move it to a packages.<name> table"
         for rule in config.get("package-rules", [])
         if "uploaded-prior-to" in rule
     ]
+    lines = text.splitlines()
     for name, body in config.get("packages", {}).items():
         if "uploaded-prior-to" in body:
             problems.extend(_exception_problems(lines, path, name, today))
@@ -52,7 +51,7 @@ def _exception_problems(lines: list[str], path: Path, name: str, today: date) ->
     if start is None:
         return [f"{where} is not a table or dotted key that the expiry check can locate"]
     above = lines[start - 1] if start else ""
-    if (match := _EXPIRY.fullmatch(above.strip())) is None:
+    if (match := re.fullmatch(r"#\s*expires\s+(\d{4}-\d{2}-\d{2})", above.strip())) is None:
         return [f"{where} uploaded-prior-to exception needs a '# expires YYYY-MM-DD' comment directly above it"]
     try:
         expires = date.fromisoformat(match[1])
