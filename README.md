@@ -545,13 +545,15 @@ Each matrix entry takes these keys:
 - `os`: runner label, used as `runs-on`.
 - `target`: Rust target triple passed to maturin.
 - `artifact`: suffix of the uploaded `<package-name>-wheels-<artifact>` artifact.
-- `python`: space-separated interpreters for `--interpreter`; default `3.15`.
+- `python`: space-separated interpreters for `--interpreter`. Leave it out for cross targets, where maturin finds no
+  host interpreter; a native entry without it builds for the job's Python 3.15.
 - `manylinux`: manylinux or musllinux policy; default `auto`.
 - `args`: extra maturin arguments, such as `--zig`.
 
 `package-path` is the directory holding the package's `Cargo.toml`; the sdist is built from it. `release-build` defaults
-to `false`, but any tag ref runs in release mode too, so a tag caller can omit it. Release mode builds without sccache.
-`workflow_call` defaults cannot be expressions, so the workflow combines the two inside.
+to `false`, but any tag ref runs in release mode too, so a tag caller can omit it. Release mode and Windows entries
+build without sccache, which breaks MSVC builds of C dependencies. `workflow_call` defaults cannot be expressions, so
+the workflow combines the two inside.
 
 `pre-build-command` runs once in the source job from the checkout root, so every wheel job builds the same tree. Use it
 for a version bump, which must happen before the source artifact is written. `post-build-command` runs in each wheel job

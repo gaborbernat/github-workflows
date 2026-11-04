@@ -133,10 +133,10 @@ jobs:
           maturin-version: ${{ needs.source.outputs.maturin-version }}
           target: ${{ matrix.target }}
           args: >-
-            -m ${{ inputs.package-path }}/Cargo.toml --locked --release --out dist --target-dir target --interpreter ${{ matrix.python || '3.15' }} ${{ matrix.args }}
+            -m ${{ inputs.package-path }}/Cargo.toml --locked --release --out dist --target-dir target ${{ matrix.python && format('--interpreter {0}', matrix.python) || '' }} ${{ matrix.args }}
           manylinux: ${{ matrix.manylinux || 'auto' }}
           docker-options: --env SOURCE_DATE_EPOCH
-          sccache: ${{ needs.source.outputs.release != 'true' }}
+          sccache: ${{ needs.source.outputs.release != 'true' && !startsWith(matrix.os, 'windows') }}
       - name: 🏗️ Run post-build command
         if: ${{ inputs.post-build-command != '' }}
         shell: bash
