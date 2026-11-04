@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Final
 
 import pytest
-from conftest import WORKFLOWS, JsonObject, load_yaml, mapping, run_workflow_step, steps, text
+from conftest import WORKFLOWS, JsonObject, load_yaml, mapping, run_workflow_step, steps
 
 _GUARD: Final[str] = "🚫 Refuse untrusted caller event"
 _WRITERS: Final[tuple[tuple[str, str], ...]] = (
@@ -14,7 +14,13 @@ _WRITERS: Final[tuple[tuple[str, str], ...]] = (
     ("publish-pre-commit-mirror.yaml", "mirror"),
     ("latex-to-pages.yaml", "deploy"),
 )
-_REFUSED: Final[tuple[str, ...]] = ("pull_request", "pull_request_target", "workflow_run", "issue_comment", "merge_group")
+_REFUSED: Final[tuple[str, ...]] = (
+    "pull_request",
+    "pull_request_target",
+    "workflow_run",
+    "issue_comment",
+    "merge_group",
+)
 _ALLOWED: Final[tuple[str, ...]] = ("push", "schedule", "workflow_dispatch", "release")
 
 
