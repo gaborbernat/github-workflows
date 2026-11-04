@@ -1,19 +1,13 @@
-from __future__ import annotations
-
 import json
 import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Final
+from typing import Final
 
 import pytest
-import yaml
-from conftest import action, run
+from conftest import JsonObject, action, at, load_yaml, mapping, run
 
-_STEPS: Final = yaml.safe_load((Path(__file__).resolve().parents[2] / "refresh-release-lock/action.yml").read_text())[
-    "runs"
-]["steps"]
 _LOCK: Final = (
     'lock-version = "1.0"\ncreated-by = "nab"\nrequires-python = ">=3.15"\npackages = []\n'
     'environments = ["python_version == \\"3.15\\""]\n[tool.nab]\ncreated-at = 2026-10-01T00:00:00Z\n'
@@ -47,6 +41,16 @@ def lock_project(tmp_path: Path) -> Path:
     return project
 
 
+@pytest.fixture
+def fake_installer(tmp_path: Path) -> Path:
+    installer = tmp_path / "tools/install_live_tools.sh"
+    installer.parent.mkdir()
+    installer.write_text('#!/bin/sh\nprintf "%s\\n" "$@" >"$RUNNER_TEMP/installed"\n')
+    installer.chmod(0o755)
+    (tmp_path / "action").mkdir()
+    return installer
+
+
 @pytest.mark.parametrize(("mode", "upgrade"), [("check", []), ("refresh", ["--upgrade"])])
 def test_refresh_locks_every_group_and_extra_with_nab(
     tmp_path: Path, action_scripts: Path, fake_uv: Path, mode: str, upgrade: list[str]
@@ -69,6 +73,32 @@ def test_refresh_locks_every_group_and_extra_with_nab(
         "--no-cache",
         *upgrade,
     ]
+
+
+def _run_step(
+    action_scripts: Path, name: str, root: Path, fake_uv: Path, **environment: str
+) -> subprocess.CompletedProcess[str]:
+    steps = at(load_yaml(Path(__file__).resolve().parents[2] / "refresh-release-lock/action.yml"), "runs", "steps")
+    assert isinstance(steps, list)
+    index = next(index for index, step in enumerate(steps) if mapping(step).get("name") == name)
+    return subprocess.run(
+        ["bash", "-e", "-o", "pipefail", str(action_scripts / f"refresh-release-lock-{index}.sh")],
+        cwd=root,
+        env=os.environ
+        | {
+            "PATH": f"{fake_uv.parent}{os.pathsep}{os.environ['PATH']}",
+            "RUNNER_TEMP": str(root),
+            "GITHUB_ACTION_PATH": str(Path(__file__).resolve().parents[2] / "refresh-release-lock"),
+        }
+        | environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def _uv_call(root: Path) -> JsonObject:
+    return mapping(json.loads((root / "uv-call.json").read_text()))
 
 
 @pytest.mark.parametrize("step", ["🔒 Resolve all project groups and extras", "🔒 Resolve optional Nab matrix"])
@@ -95,7 +125,7 @@ def test_refresh_hides_certificate_overrides_from_nab(
     )
 
     assert result.returncode == 0, result.stderr
-    assert not {"SSL_CERT_FILE", "SSL_CERT_DIR"} & _uv_call(tmp_path)["env"].keys()
+    assert not {"SSL_CERT_FILE", "SSL_CERT_DIR"} & mapping(at(_uv_call(tmp_path), "env")).keys()
 
 
 def test_refresh_check_accepts_current_lock(
@@ -107,37 +137,6 @@ def test_refresh_check_accepts_current_lock(
 
     assert result.returncode == 0, result.stderr
     assert run(lock_project, "git", "status", "--porcelain").stdout == ""
-
-
-def test_refresh_check_rejects_stale_lock(
-    lock_project: Path, nab_executable: Path, tmp_path: Path, action_scripts: Path
-) -> None:
-    _commit_lock(lock_project, nab_executable)
-    project = lock_project / "pyproject.toml"
-    project.write_text(project.read_text().replace("dependencies = []", 'dependencies = ["six"]'))
-
-    result = action(lock_project, tmp_path, action_scripts, "refresh-release-lock", version="", MODE="check")
-
-    assert result.returncode != 0
-    assert "regenerated Nab lock differs from the committed lock" in result.stderr
-
-
-def test_refresh_writes_patch_for_stale_lock(
-    lock_project: Path, nab_executable: Path, tmp_path: Path, action_scripts: Path
-) -> None:
-    _commit_lock(lock_project, nab_executable)
-    project = lock_project / "pyproject.toml"
-    project.write_text(project.read_text().replace("dependencies = []", 'dependencies = ["six"]'))
-    outputs: dict[str, str] = {}
-
-    result = action(lock_project, tmp_path, action_scripts, "refresh-release-lock", outputs, version="", MODE="refresh")
-
-    assert result.returncode == 0, result.stderr
-    assert outputs["changed"] == "true"
-    patch = (tmp_path / "lock.patch").read_text()
-    assert "diff --git a/pylock.toml b/pylock.toml" in patch
-    assert 'name = "six"' in patch
-    assert "diff --git a/pyproject.toml" not in patch
 
 
 def _commit_lock(project: Path, nab: Path) -> None:
@@ -154,28 +153,53 @@ def _commit_lock(project: Path, nab: Path) -> None:
     run(project, "git", "commit", "-m", "Lock the project")
 
 
-def _run_step(
-    action_scripts: Path, name: str, root: Path, fake_uv: Path, **environment: str
-) -> subprocess.CompletedProcess[str]:
-    index = next(index for index, step in enumerate(_STEPS) if step.get("name") == name)
-    return subprocess.run(
-        ["bash", "-e", "-o", "pipefail", str(action_scripts / f"refresh-release-lock-{index}.sh")],
-        cwd=root,
-        env=os.environ
-        | {
-            "PATH": f"{fake_uv.parent}{os.pathsep}{os.environ['PATH']}",
-            "RUNNER_TEMP": str(root),
-            "GITHUB_ACTION_PATH": str(Path(__file__).resolve().parents[2] / "refresh-release-lock"),
-        }
-        | environment,
-        text=True,
-        capture_output=True,
-        check=False,
+def test_refresh_check_rejects_stale_lock(
+    lock_project: Path, nab_executable: Path, tmp_path: Path, action_scripts: Path
+) -> None:
+    _commit_lock(lock_project, nab_executable)
+    project = lock_project / "pyproject.toml"
+    project.write_text(project.read_text().replace("dependencies = []", 'dependencies = ["six"]'))
+
+    result = action(lock_project, tmp_path, action_scripts, "refresh-release-lock", version="", MODE="check")
+
+    assert result.returncode != 0
+    assert "regenerated Nab lock differs from the committed lock" in result.stderr
+
+
+def test_refresh_check_rejects_expired_exception_before_locking(
+    lock_project: Path, tmp_path: Path, action_scripts: Path
+) -> None:
+    project = lock_project / "pyproject.toml"
+    project.write_text(
+        project.read_text()
+        + "# expires 2000-01-01\n[tool.nab.packages.six]\nuploaded-prior-to = 2026-10-01T00:00:00Z\n"
     )
+    run(lock_project, "git", "add", ".")
+    run(lock_project, "git", "commit", "-m", "Add an expired exception")
+
+    result = action(lock_project, tmp_path, action_scripts, "refresh-release-lock", version="", MODE="check")
+
+    assert result.returncode != 0
+    assert "packages.six uploaded-prior-to exception expired on 2000-01-01" in result.stderr
+    assert not (tmp_path / "lock-tools").exists()
 
 
-def _uv_call(root: Path) -> dict[str, Any]:
-    return json.loads((root / "uv-call.json").read_text())
+def test_refresh_writes_patch_for_stale_lock(
+    lock_project: Path, nab_executable: Path, tmp_path: Path, action_scripts: Path
+) -> None:
+    _commit_lock(lock_project, nab_executable)
+    project = lock_project / "pyproject.toml"
+    project.write_text(project.read_text().replace("dependencies = []", 'dependencies = ["six"]'))
+    outputs: dict[str, str] = {}
+
+    result = action(lock_project, tmp_path, action_scripts, "refresh-release-lock", outputs, version="", MODE="refresh")
+
+    assert result.returncode == 0, result.stderr
+    assert outputs["changed"] == "true"
+    patch = (tmp_path / "maintenance.patch").read_text()
+    assert "diff --git a/pylock.toml b/pylock.toml" in patch
+    assert 'name = "six"' in patch
+    assert "diff --git a/pyproject.toml" not in patch
 
 
 def test_refresh_installs_nab_under_cutoff(lock_project: Path, tmp_path: Path, action_scripts: Path) -> None:
@@ -196,19 +220,6 @@ def test_refresh_installs_nab_under_cutoff(lock_project: Path, tmp_path: Path, a
     assert "nab>=0.0.22" in result.stderr
 
 
-_VERSIONED_LOCK: Final = f'{_LOCK}nab-version = "0.0.21"\n'
-
-
-@pytest.fixture
-def fake_installer(tmp_path: Path) -> Path:
-    installer = tmp_path / "tools/install_live_tools.sh"
-    installer.parent.mkdir()
-    installer.write_text('#!/bin/sh\nprintf "%s\\n" "$@" >"$RUNNER_TEMP/installed"\n')
-    installer.chmod(0o755)
-    (tmp_path / "action").mkdir()
-    return installer
-
-
 @pytest.mark.parametrize(
     ("mode", "requirements"),
     [
@@ -220,7 +231,7 @@ def fake_installer(tmp_path: Path) -> Path:
 def test_refresh_installs_selected_nab(
     tmp_path: Path, action_scripts: Path, mode: str, requirements: list[str]
 ) -> None:
-    (tmp_path / "pylock.toml").write_text(_VERSIONED_LOCK)
+    (tmp_path / "pylock.toml").write_text(f'{_LOCK}nab-version = "0.0.21"\n')
 
     result = _run_step(
         action_scripts,
@@ -235,12 +246,26 @@ def test_refresh_installs_selected_nab(
     assert (tmp_path / "installed").read_text().splitlines() == [f"{tmp_path}/lock-tools", *requirements]
 
 
-@pytest.mark.parametrize("lock", [None, _LOCK], ids=["no-lock", "no-nab-version"])
 @pytest.mark.usefixtures("fake_installer")
-def test_refresh_check_requires_locked_nab_version(tmp_path: Path, action_scripts: Path, lock: str | None) -> None:
-    if lock is not None:
-        (tmp_path / "pylock.toml").write_text(lock)
+def test_refresh_check_requires_nab_version_in_lock(tmp_path: Path, action_scripts: Path) -> None:
+    (tmp_path / "pylock.toml").write_text(_LOCK)
 
+    result = _run_step(
+        action_scripts,
+        "📦 Install Nab",
+        tmp_path,
+        tmp_path / "bin/uv",
+        GITHUB_ACTION_PATH=str(tmp_path / "action"),
+        MODE="check",
+    )
+
+    assert result.returncode != 0
+    assert "::error::check mode needs the Nab version in pylock.toml [tool.nab] nab-version" in result.stderr
+    assert not (tmp_path / "installed").exists()
+
+
+@pytest.mark.usefixtures("fake_installer")
+def test_refresh_check_requires_lock_file(tmp_path: Path, action_scripts: Path) -> None:
     result = _run_step(
         action_scripts,
         "📦 Install Nab",

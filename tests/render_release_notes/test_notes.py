@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from pathlib import Path
 from textwrap import dedent
 
@@ -61,6 +59,20 @@ def test_render_release_notes_uses_tagged_changelog(
         [📜 Full Changelog](https://github.com/tox-dev/fixture/compare/0.1.0...0.2.0)
         """,
     )
+
+
+def test_render_release_notes_reports_previous_tag(
+    tagged_repository: Path, tmp_path: Path, action_scripts: Path
+) -> None:
+    result = action(
+        tagged_repository,
+        tmp_path,
+        action_scripts,
+        "render-release-notes",
+        version="0.2.0",
+        TAG="0.2.0",
+    )
+    assert result.returncode == 0, result.stderr
     assert "previous=0.1.0" in (tmp_path / "output").read_text()
 
 
@@ -162,3 +174,48 @@ def test_render_release_notes_rejects_unpaired_labels(
     )
     assert result.returncode != 0
     assert "artifact-label has 1 lines for 2 artifact-url lines" in result.stdout
+
+
+def test_render_release_notes_selects_package_section(
+    tagged_repository: Path, tmp_path: Path, action_scripts: Path
+) -> None:
+    (tagged_repository / "CHANGELOG.md").write_text(
+        dedent(
+            """\
+            # Changelog
+
+            ## fixture
+
+            ### 0.2.0 (2026-10-20)
+
+            #### Added
+
+            - Add a new feature ([#2](https://github.com/tox-dev/fixture/pull/2)) by
+              [@gaborbernat](https://github.com/gaborbernat).
+
+            ## other
+
+            ### 0.2.0 (2026-10-20)
+
+            #### Added
+
+            - Add a feature to the other package.
+            """,
+        ),
+    )
+    run(tagged_repository, "git", "add", "CHANGELOG.md")
+    run(tagged_repository, "git", "commit", "-m", "Release fixture 0.2.0")
+    run(tagged_repository, "git", "tag", "fixture/0.2.0")
+    result = action(
+        tagged_repository,
+        tmp_path,
+        action_scripts,
+        "render-release-notes",
+        version="fixture/0.2.0",
+        TAG="fixture/0.2.0",
+        PACKAGE="fixture",
+    )
+    assert result.returncode == 0, result.stderr
+    notes = (tmp_path / "release-notes.md").read_text()
+    assert "Add a new feature" in notes
+    assert "other package" not in notes

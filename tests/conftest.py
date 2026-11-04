@@ -1,7 +1,6 @@
-from __future__ import annotations
-
 import json
 import os
+import re
 import shutil
 import ssl
 import subprocess
@@ -10,7 +9,7 @@ import tomllib
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 from textwrap import dedent
-from typing import Final
+from typing import Final, TypeIs
 
 import certifi
 import coverage
@@ -21,6 +20,7 @@ from pytest_httpserver import HTTPServer
 from werkzeug.wrappers import Request, Response
 
 CALLER: Final = Path(__file__).parent / "fixtures/caller"
+WORKFLOWS: Final = Path(__file__).resolve().parents[1] / ".github/workflows"
 
 
 @pytest.fixture
@@ -67,7 +67,9 @@ def action_scripts(tmp_path_factory: pytest.TempPathFactory) -> Path:
         "render-release-notes",
         "select-previous-tag",
         "validate-news",
+        "required-checks",
         "refresh-release-lock",
+        "check-nab-exceptions",
         "install-locked-tools",
         "export-build-constraints",
         "build-python-distribution",
@@ -77,6 +79,8 @@ def action_scripts(tmp_path_factory: pytest.TempPathFactory) -> Path:
         "publish-jetbrains-marketplace",
         "sign-jetbrains-plugin",
         "publish-post-release-pr",
+        "stage-jetbrains-marketplace",
+        "prepare-jetbrains-post-release",
     ):
         action = yaml.safe_load((source / action_name / "action.yml").read_text())
         for index, step in enumerate(action["runs"]["steps"]):
@@ -355,6 +359,114 @@ def _run_action(
     return subprocess.CompletedProcess(command, 0, "".join(stdout), "".join(stderr)), outputs
 
 
+type JsonValue = str | int | float | bool | None | list[JsonValue] | dict[str, JsonValue]
+type JsonObject = dict[str, JsonValue]
+
+
+def load_yaml(path: Path) -> JsonObject:
+    document = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
+    if not is_json_object(document):
+        msg = f"{path} is not a YAML mapping"
+        raise TypeError(msg)
+    return document
+
+
+def mapping(value: JsonValue) -> JsonObject:
+    if not is_json_object(value):
+        msg = f"expected a mapping, got {value!r}"
+        raise TypeError(msg)
+    return value
+
+
+def text(value: JsonValue) -> str:
+    if not isinstance(value, str):
+        msg = f"expected text, got {value!r}"
+        raise TypeError(msg)
+    return value
+
+
+def at(document: JsonObject, *keys: str) -> JsonValue:
+    value: JsonValue = document
+    for key in keys:
+        value = mapping(value)[key]
+    return value
+
+
+def step_list(value: JsonValue) -> list[JsonObject]:
+    if not isinstance(value, list):
+        msg = f"expected a step list, got {value!r}"
+        raise TypeError(msg)
+    return [mapping(item) for item in value]
+
+
+def steps(document: JsonObject, job: str) -> list[JsonObject]:
+    return step_list(at(document, "jobs", job, "steps"))
+
+
+def step(document: JsonObject, job: str, name: str) -> JsonObject:
+    return next(item for item in steps(document, job) if item.get("name") == name)
+
+
+def workflow_env(workflow: str) -> dict[str, str]:
+    return {key: text(value) for key, value in mapping(load_yaml(WORKFLOWS / workflow).get("env", {})).items()}
+
+
+def workflow_step(workflow: str, job: str, name: str) -> JsonObject:
+    return step(load_yaml(WORKFLOWS / workflow), job, name)
+
+
+def run_workflow_step(
+    workflow: str,
+    job: str,
+    name: str,
+    *,
+    cwd: Path,
+    runner_temp: Path,
+    values: Mapping[str, str],
+    env: Mapping[str, str],
+) -> tuple[subprocess.CompletedProcess[str], dict[str, str]]:
+    definition = workflow_step(workflow, job, name)
+    script = runner_temp / "step.sh"
+    script.write_text(text(definition["run"]))
+    output = runner_temp / "output"
+    output.unlink(missing_ok=True)
+    expand = {"runner.temp": str(runner_temp), "github.repository": "tox-dev/fixture", **values}
+    declared = workflow_env(workflow) | {key: text(value) for key, value in mapping(definition.get("env", {})).items()}
+    # An env override replaces the value, so its ${{ }} expression need not resolve.
+    expanded = {
+        variable: re.sub(r"\$\{\{\s*(.+?)\s*\}\}", lambda match: expand[match.group(1)], value)
+        for variable, value in declared.items()
+        if variable not in env
+    }
+    environment = {variable: os.environ[variable] for variable in ("HOME", "LANG", "PATH") if variable in os.environ}
+    environment |= {
+        "RUNNER_TEMP": str(runner_temp),
+        "GITHUB_OUTPUT": str(output),
+        "GITHUB_REPOSITORY": "tox-dev/fixture",
+    }
+    result = subprocess.run(
+        ["bash", "--noprofile", "--norc", "-eo", "pipefail", str(script)],
+        cwd=cwd,
+        env={**environment, **expanded, **env},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    return result, read_outputs(output)
+
+
+def is_json(value: object) -> TypeIs[JsonValue]:
+    if isinstance(value, list):
+        return all(is_json(item) for item in value)
+    if isinstance(value, dict):
+        return is_json_object(value)
+    return value is None or isinstance(value, str | int | float | bool)
+
+
+def is_json_object(value: object) -> TypeIs[JsonObject]:
+    return isinstance(value, dict) and all(isinstance(key, str) and is_json(item) for key, item in value.items())
+
+
 def run(directory: Path, *command: str) -> subprocess.CompletedProcess[str]:
     environment = _safe_environment()
     result = subprocess.run(
@@ -482,8 +594,40 @@ def _expression(
     raise ValueError(f"unsupported GitHub step environment: {expression}")  # pragma: no cover - new syntax only
 
 
+def read_outputs(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    outputs: dict[str, str] = {}
+    lines = path.read_text().splitlines()
+    index = 0
+    while index < len(lines):
+        if "<<" in lines[index]:
+            name, delimiter = lines[index].split("<<", 1)
+            end = lines.index(delimiter, index + 1)
+            outputs[name] = "\n".join(lines[index + 1 : end])
+            index = end + 1
+        else:
+            name, _, value = lines[index].partition("=")
+            outputs[name] = value
+            index += 1
+    return outputs
+
+
 __all__ = [
     "CALLER",
+    "WORKFLOWS",
+    "JsonObject",
+    "JsonValue",
     "action",
+    "at",
+    "load_yaml",
+    "mapping",
     "run",
+    "run_workflow_step",
+    "step",
+    "step_list",
+    "steps",
+    "text",
+    "workflow_env",
+    "workflow_step",
 ]

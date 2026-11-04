@@ -35,6 +35,9 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: 📅 Check cutoff exception expiry
+      if: inputs.mode == 'check'
+      uses: $/check-nab-exceptions
     - name: 📦 Install Nab
       shell: bash
       env:
@@ -169,7 +172,7 @@ runs:
           echo 'changed=false' >>"$GITHUB_OUTPUT"
         else
           echo 'changed=true' >>"$GITHUB_OUTPUT"
-          git diff --binary -- "${paths[@]}" >"$RUNNER_TEMP/lock.patch"
-          echo "Lock patch -> $RUNNER_TEMP/lock.patch:"
+          git diff --binary -- "${paths[@]}" >"$RUNNER_TEMP/maintenance.patch"
+          echo "Lock patch -> $RUNNER_TEMP/maintenance.patch:"
           git diff --stat -- "${paths[@]}"
         fi

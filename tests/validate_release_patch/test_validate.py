@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from pathlib import Path
 from textwrap import dedent
 
@@ -27,15 +25,6 @@ def test_validate_applies_patch_in_fresh_worktree(repository: Path, tmp_path: Pa
     assert run(repository, "git", "diff", "--cached", "--name-only").stdout == source_staged
 
 
-def track_rst_changelog(repository: Path) -> None:
-    (repository / "CHANGELOG.rst").write_text("Changelog\n=========\n")
-    project = repository / "pyproject.toml"
-    project.write_text(project.read_text().replace('filename = "CHANGELOG.md"', 'filename = "CHANGELOG.rst"'))
-    run(repository, "git", "add", "CHANGELOG.rst", "pyproject.toml")
-    run(repository, "git", "commit", "-m", "Track RST changelog")
-    run(repository, "git", "push", "origin", "main")
-
-
 @pytest.mark.parametrize(
     "heading",
     [
@@ -44,9 +33,8 @@ def track_rst_changelog(repository: Path) -> None:
     ],
 )
 def test_validate_rst_heading(repository: Path, tmp_path: Path, action_scripts: Path, heading: str) -> None:
-    changelog = repository / "CHANGELOG.rst"
     track_rst_changelog(repository)
-    changelog.write_text(
+    (repository / "CHANGELOG.rst").write_text(
         dedent("""\
             Changelog
             =========
@@ -60,10 +48,23 @@ def test_validate_rst_heading(repository: Path, tmp_path: Path, action_scripts: 
             - Add a feature.
             """).format(heading=heading, underline="=" * len(heading)),
     )
-    (tmp_path / "release.patch").write_text(run(repository, "git", "diff", "HEAD", "--binary").stdout)
-    run(repository, "git", "reset", "--hard", "HEAD")
+    _patch(repository, tmp_path)
     result = action(repository, tmp_path, action_scripts, "validate-release-patch", version="0.2.0")
     assert result.returncode == 0, result.stderr
+
+
+def track_rst_changelog(repository: Path) -> None:
+    (repository / "CHANGELOG.rst").write_text("Changelog\n=========\n")
+    project = repository / "pyproject.toml"
+    project.write_text(project.read_text().replace('filename = "CHANGELOG.md"', 'filename = "CHANGELOG.rst"'))
+    run(repository, "git", "add", "CHANGELOG.rst", "pyproject.toml")
+    run(repository, "git", "commit", "-m", "Track RST changelog")
+    run(repository, "git", "push", "origin", "main")
+
+
+def _patch(repository: Path, tmp_path: Path) -> None:
+    (tmp_path / "release.patch").write_text(run(repository, "git", "diff", "HEAD", "--binary").stdout)
+    run(repository, "git", "reset", "--hard", "HEAD")
 
 
 def test_validate_key_job_uses_only_checked_patch(repository: Path, tmp_path: Path, action_scripts: Path) -> None:
@@ -105,8 +106,7 @@ def test_validate_rejects_unsupported_fragment_path(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("Unexpected release fragment.\n")
     run(repository, "git", "add", str(path.relative_to(repository)))
-    (tmp_path / "release.patch").write_text(run(repository, "git", "diff", "HEAD", "--binary").stdout)
-    run(repository, "git", "reset", "--hard", "HEAD")
+    _patch(repository, tmp_path)
     run(repository, "git", "clean", "-fd")
     result = action(
         repository,
@@ -127,8 +127,7 @@ def test_validate_rejects_renamed_fragment_source(repository: Path, tmp_path: Pa
     run(repository, "git", "push", "origin", "main")
     run(repository, "git", "mv", str(source.relative_to(repository)), "changelog.d/1.feature.md")
     (repository / "CHANGELOG.md").write_text("# Changelog\n\n## 0.2.0 (2026-10-22)\n\n- Add a feature.\n")
-    (tmp_path / "release.patch").write_text(run(repository, "git", "diff", "HEAD", "--binary").stdout)
-    run(repository, "git", "reset", "--hard", "HEAD")
+    _patch(repository, tmp_path)
     result = action(
         repository,
         tmp_path,
@@ -140,25 +139,24 @@ def test_validate_rejects_renamed_fragment_source(repository: Path, tmp_path: Pa
     assert "unexpected release path status" in result.stderr
 
 
-@pytest.mark.parametrize(
-    "file_mode",
-    [pytest.param("executable", id="executable"), pytest.param("symlink", id="symlink")],
-)
-def test_validate_rejects_unsafe_file_mode(
-    repository: Path, tmp_path: Path, action_scripts: Path, file_mode: str
-) -> None:
+def test_validate_rejects_executable_changelog(repository: Path, tmp_path: Path, action_scripts: Path) -> None:
     assert action(repository, tmp_path, action_scripts, "prepare-towncrier", version="0.2.0").returncode == 0
-    if file_mode == "executable":
-        (repository / "CHANGELOG.md").chmod(0o755)
-    else:
-        (repository / "CHANGELOG.md").unlink()
-        (repository / "CHANGELOG.md").symlink_to("pyproject.toml")
-        run(repository, "git", "add", "CHANGELOG.md")
-    (tmp_path / "release.patch").write_text(run(repository, "git", "diff", "HEAD", "--binary").stdout)
-    run(repository, "git", "reset", "--hard", "HEAD")
+    (repository / "CHANGELOG.md").chmod(0o755)
+    _patch(repository, tmp_path)
     result = action(repository, tmp_path, action_scripts, "validate-release-patch", version="0.2.0")
     assert result.returncode != 0
-    assert ("unexpected release path" if file_mode == "symlink" else "unexpected release file mode") in result.stderr
+    assert "unexpected release file mode" in result.stderr
+
+
+def test_validate_rejects_symlinked_changelog(repository: Path, tmp_path: Path, action_scripts: Path) -> None:
+    assert action(repository, tmp_path, action_scripts, "prepare-towncrier", version="0.2.0").returncode == 0
+    (repository / "CHANGELOG.md").unlink()
+    (repository / "CHANGELOG.md").symlink_to("pyproject.toml")
+    run(repository, "git", "add", "CHANGELOG.md")
+    _patch(repository, tmp_path)
+    result = action(repository, tmp_path, action_scripts, "validate-release-patch", version="0.2.0")
+    assert result.returncode != 0
+    assert "unexpected release path" in result.stderr
 
 
 def test_validate_rejects_nonregular_deleted_fragment(repository: Path, tmp_path: Path, action_scripts: Path) -> None:
@@ -169,8 +167,7 @@ def test_validate_rejects_nonregular_deleted_fragment(repository: Path, tmp_path
     run(repository, "git", "push", "origin", "main")
     (repository / "CHANGELOG.md").write_text("# Changelog\n\n## 0.2.0 (2026-10-21)\n\n- Add a feature.\n")
     fragment.unlink()
-    (tmp_path / "release.patch").write_text(run(repository, "git", "diff", "HEAD", "--binary").stdout)
-    run(repository, "git", "reset", "--hard", "HEAD")
+    _patch(repository, tmp_path)
     result = action(
         repository,
         tmp_path,
@@ -184,8 +181,44 @@ def test_validate_rejects_nonregular_deleted_fragment(repository: Path, tmp_path
 
 def test_validate_rejects_removed_changelog(repository: Path, tmp_path: Path, action_scripts: Path) -> None:
     (repository / "CHANGELOG.md").unlink()
-    (tmp_path / "release.patch").write_text(run(repository, "git", "diff", "HEAD", "--binary").stdout)
-    run(repository, "git", "reset", "--hard", "HEAD")
+    _patch(repository, tmp_path)
     result = action(repository, tmp_path, action_scripts, "validate-release-patch", version="0.2.0")
     assert result.returncode != 0
     assert "unexpected release path" in result.stderr
+
+
+def test_allowlist_accepts_listed_paths_only(repository: Path, tmp_path: Path, action_scripts: Path) -> None:
+    (repository / "pyproject.toml").write_text((repository / "pyproject.toml").read_text() + "\n# changed\n")
+    (repository / "changelog.d/+feature.feature.md").unlink()
+    _patch(repository, tmp_path)
+    result = action(
+        repository,
+        tmp_path,
+        action_scripts,
+        "validate-release-patch",
+        version="0.2.0",
+        ALLOWED_PATHS="pyproject.toml\nchangelog.d/*",
+    )
+    assert result.returncode == 0, result.stderr
+    assert "within the allowlist" in result.stdout
+    assert "changelog.d/+feature.feature.md" in run(repository, "git", "diff", "--cached", "--name-only").stdout
+
+
+def test_allowlist_rejects_unlisted_path(repository: Path, tmp_path: Path, action_scripts: Path) -> None:
+    (repository / "pyproject.toml").write_text((repository / "pyproject.toml").read_text() + "\n# changed\n")
+    _patch(repository, tmp_path)
+    result = action(
+        repository, tmp_path, action_scripts, "validate-release-patch", version="0.2.0", ALLOWED_PATHS="CHANGELOG.md"
+    )
+    assert result.returncode != 0
+    assert "unexpected release path: pyproject.toml" in result.stderr
+
+
+def test_allowlist_rejects_executable_mode(repository: Path, tmp_path: Path, action_scripts: Path) -> None:
+    (repository / "pyproject.toml").chmod(0o755)
+    _patch(repository, tmp_path)
+    result = action(
+        repository, tmp_path, action_scripts, "validate-release-patch", version="0.2.0", ALLOWED_PATHS="pyproject.toml"
+    )
+    assert result.returncode != 0
+    assert "unexpected release file mode" in result.stderr

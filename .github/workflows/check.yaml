@@ -1,145 +1,146 @@
 name: Check
 on:
-  pull_request:
-    types: [opened, reopened, synchronize]
-permissions:
-  contents: read
-concurrency:
-  group: check-${{ github.ref }}-${{ github.run_attempt > 1 && github.run_id || 'current' }}
-  cancel-in-progress: ${{ github.run_attempt == 1 }}
+  workflow_call:
+    inputs:
+      include:
+        description: JSON array of matrix rows; each has env, and optionally python and os
+        type: string
+        required: true
+      os:
+        description: Runner for rows without an os
+        type: string
+        default: ubuntu-26.04
+      apt-packages:
+        description: Space-separated Ubuntu packages installed on Linux jobs before tox runs
+        type: string
+        default: ""
+      tox-install:
+        description: Arguments to uv tool install that put tox and its plugins on PATH
+        type: string
+        default: tox --with tox-uv
+      exclude-newer:
+        description: Upload cutoff for the tox install, a timestamp or a duration
+        type: string
+        default: 7 days
+      exclude-newer-package:
+        description: Newline-separated name=date cutoffs that override exclude-newer for single packages
+        type: string
+        default: ""
+      pytest-addopts:
+        description: PYTEST_ADDOPTS for the test run
+        type: string
+        default: "-vv --durations=20"
+      diff-against:
+        description: DIFF_AGAINST for the test run, a Git revision the tests compare with
+        type: string
+        default: HEAD
+      coverage:
+        description: Upload each job's .tox/.coverage.* data as an artifact for a caller job to merge
+        type: boolean
+        default: false
+permissions: {}
 jobs:
-  check:
-    name: 🧹 Check formatting
-    runs-on: ubuntu-26.04
+  test:
+    name: 🧪 ${{ matrix.env }} on ${{ matrix.os || inputs.os }}
+    runs-on: ${{ matrix.os || inputs.os }}
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.include) }}
     steps:
       - name: 📥 Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 1
+          fetch-depth: 0
           persist-credentials: false
-      - name: 💾 Restore prek cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/prek
-          key: prek-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.pre-commit-config.yaml') }}
-      - name: 🐍 Install uv and Python
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
-        with:
-          version: latest-known
-          python-version: "3.15"
-          enable-cache: true
-          cache-suffix: ${{ github.job }}
-          cache-dependency-glob: pyproject.toml
-      - name: 📦 Install release tools
+      - name: 📦 Install apt packages
+        id: apt
+        background: true
+        shell: bash
         env:
-          EXCLUDE_NEWER: 7 days
-        run: |
-          tools/install_live_tools.sh .release-tools 'prek>=0.2'
-          uv run --no-project --python .release-tools python tools/expose_locked_commands.py .release-tools
-      - name: 🧹 Check repository formatting
-        run: tools/cooled_prek.sh run --all-files
-  shell:
-    name: 🧹 Check inline shell
-    runs-on: ubuntu-26.04
-    permissions:
-      contents: read
-    steps:
-      - name: 📥 Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-      - name: 💾 Restore prek cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/prek
-          key: prek-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.pre-commit-config.yaml') }}
-      - name: 🐍 Install uv and Python
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
-        with:
-          version: latest-known
-          python-version: "3.15"
-          enable-cache: true
-          cache-suffix: ${{ github.job }}
-          cache-dependency-glob: pyproject.toml
-      - name: 📦 Install release tools
-        env:
-          EXCLUDE_NEWER: 7 days
-        run: |
-          tools/install_live_tools.sh .release-tools 'prek>=0.2' 'yq>=4.4.5'
-          uv run --no-project --python .release-tools python tools/expose_locked_commands.py .release-tools
-      - name: 🧹 Check inline shell
+          APT_PACKAGES: ${{ inputs.apt-packages }}
         run: |
           set -euo pipefail
-          script_dir=./inline-shell-check
-          mkdir "$script_dir"
-          trap 'rm -rf "$script_dir"' EXIT
-          for file in .github/workflows/*.yaml */action.yml; do
-            yq -rj '[.. | objects | select(has("run")) | .run] | .[] | . + "\u0000"' "$file" \
-              >"$RUNNER_TEMP/run-blocks"
-            index=0
-            while IFS= read -r -d '' script; do
-              script_file="$script_dir/run-${file//\//-}-$index.sh"
-              printf '#!/usr/bin/env bash\n%s\n' "${script%$'\n'}" >"$script_file"
-              index=$((index + 1))
-            done <"$RUNNER_TEMP/run-blocks"
-          done
-          scripts=("$script_dir"/*.sh)
-          echo "Checking ${#scripts[@]} run blocks from the workflows and Actions with shellcheck and shfmt"
-          tools/cooled_prek.sh run shellcheck --files "$script_dir"/*.sh
-          tools/cooled_prek.sh run shfmt --files "$script_dir"/*.sh
-  test:
-    name: 🧪 Test actions
-    runs-on: ubuntu-26.04
-    permissions:
-      contents: read
-    steps:
-      - name: 📥 Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 1
-          persist-credentials: false
+          if [[ -z "$APT_PACKAGES" || "$RUNNER_OS" != Linux ]]; then
+            echo 'Apt packages skipped: the apt-packages input is empty or the runner is not Linux'
+            exit 0
+          fi
+          read -ra packages <<<"$APT_PACKAGES"
+          sudo apt-get update
+          sudo apt-get install -y "${packages[@]}"
       - name: 🐍 Install uv and Python
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version: latest-known
           python-version: "3.15"
-          enable-cache: true
-          cache-suffix: ${{ github.job }}
-          cache-dependency-glob: pyproject.toml
-      - name: 🧪 Run Action tests
-        run: uvx --with tox-uv tox run -e test
-  type:
-    name: 🔎 Type check
-    runs-on: ubuntu-26.04
-    permissions:
-      contents: read
-    steps:
-      - name: 📥 Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+          enable-cache: false
+      - name: 📦 Install tox
+        id: tox
+        background: true
+        shell: bash
+        env:
+          TOX_INSTALL: ${{ inputs.tox-install }}
+          EXCLUDE_NEWER: ${{ inputs.exclude-newer }}
+          EXCLUDE_NEWER_PACKAGE: ${{ inputs.exclude-newer-package }}
+        run: |
+          set -euo pipefail
+          read -ra spec <<<"$TOX_INSTALL"
+          options=(--exclude-newer "$EXCLUDE_NEWER")
+          while IFS= read -r line; do
+            if [[ -n "$line" ]]; then options+=(--exclude-newer-package "$line"); fi
+          done <<<"$EXCLUDE_NEWER_PACKAGE"
+          echo "Installing ${spec[*]} with uploads older than $EXCLUDE_NEWER"
+          uv tool install --python-preference only-managed --python 3.15 "${options[@]}" "${spec[@]}"
+      - name: 🐍 Install Python
+        id: python
+        background: true
+        shell: bash
+        env:
+          PYTHON: ${{ matrix.python }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$PYTHON" ]]; then
+            echo 'Python install skipped: the matrix row names no python'
+            exit 0
+          fi
+          uv python install --python-preference only-managed "$PYTHON"
+      - name: ⏳ Wait for apt packages
+        wait: apt
+      - name: ⏳ Wait for tox
+        wait: tox
+      - name: ⏳ Wait for Python
+        wait: python
+      - name: 📦 Set up test suite
+        shell: bash
+        env:
+          MATRIX_ENV: ${{ matrix.env }}
+        run: tox run -vv --notest --skip-missing-interpreters false -e "$MATRIX_ENV"
+      - name: 🧪 Run test suite
+        shell: bash
+        env:
+          MATRIX_ENV: ${{ matrix.env }}
+          PYTEST_ADDOPTS: ${{ inputs.pytest-addopts }}
+          DIFF_AGAINST: ${{ inputs.diff-against }}
+        run: tox run --skip-pkg-install -e "$MATRIX_ENV"
+      - name: 📤 Upload coverage data
+        if: ${{ inputs.coverage }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          persist-credentials: false
-      - name: 🐍 Install uv and Python
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
-        with:
-          version: latest-known
-          python-version: "3.15"
-          enable-cache: true
-          cache-suffix: ${{ github.job }}
-          cache-dependency-glob: pyproject.toml
-      - name: 🔎 Check Python types
-        run: uvx --with tox-uv tox run -e type
+          include-hidden-files: true
+          name: .coverage.${{ matrix.os || inputs.os }}.${{ matrix.env }}
+          path: .tox/.coverage.*
+          if-no-files-found: error
+          retention-days: 3
   gate:
     name: 🚦 Required checks pass
     if: ${{ !cancelled() }}
-    needs: [check, shell, test, type]
+    needs: [test]
     runs-on: ubuntu-26.04
+    permissions: {}
     steps:
       - name: 🚦 Require all needed jobs to pass
-        env:
-          NEEDS_JSON: ${{ toJSON(needs) }}
-        run: |
-          jq -r 'to_entries[] | "Job \(.key): \(.value.result)"' <<<"$NEEDS_JSON"
-          jq -e 'all(to_entries[]; .value.result == "success")' <<<"$NEEDS_JSON"
+        uses: $/required-checks
+        with:
+          needs: ${{ toJSON(needs) }}
