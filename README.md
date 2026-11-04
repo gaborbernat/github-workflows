@@ -1139,6 +1139,12 @@ leaves the draft for a later retry. The Action removes incomplete `starter` asse
 the release by ID for up to ten seconds after draft creation or asset upload; a mismatch still fails when that window
 ends.
 
+A GitHub API call that fails with a server error or a network error is retried up to three times, with backoff; a 4xx
+fails at once. Draft creation is the exception: a request GitHub had already applied would be sent again and could leave
+a second draft, so that call is not retried. If the publish call fails, the Action reads the release again and succeeds
+when GitHub already published it with the expected assets and notes, which covers a response lost after GitHub applied
+the change.
+
 ## Reconcile a post-release pull request
 
 `publish-post-release-pr` consumes a candidate commit prepared without an App token. The preparation job records the
