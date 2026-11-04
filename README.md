@@ -1387,11 +1387,14 @@ The writer job uploads those files with the App token from the `release-auth` en
 ## Publish a pre-commit mirror
 
 `publish-pre-commit-mirror.yaml` generates a pre-commit mirror of a Python package's hook with pre-commit-mirror-maker
-1.14.0, formats the result with prek 0.5.5, and commits it as `Mirror: <version>`. On `main`, one atomic push updates
-the branch and creates the `v<version>` tag, then a GitHub release is created.
+1.14.0, formats the result with prek 0.5.5, and commits each new version as `Mirror: <version>`. On `main`, one atomic
+push updates the branch and creates a `v<version>` tag per new version, then a GitHub release is created for each tag. A
+run with no new upstream version changes nothing.
 
 - Formatting runs twice. The first run may rewrite files and exit 1; the second run must pass on the rewritten tree. Any
   other exit status fails the job.
+- When one run mirrors several versions, only the newest commit gets the README update and the formatting. Older tags
+  keep the tree pre-commit-mirror-maker generated.
 - A version whose tag already exists on origin is a no-op when the regenerated tree matches the tag, so the daily run
   succeeds with a notice. A different tree fails the run and names both trees. A published tag is never moved, because a
   moved tag changes the rev users have pinned; bump the package version to publish new content.

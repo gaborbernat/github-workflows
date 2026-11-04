@@ -49,7 +49,13 @@ jobs:
         with:
           version: "0.13.7"
           enable-cache: false
+      - name: ⚙️ Configure Git identity
+        run: |
+          set -euo pipefail
+          git config user.name 'Github Actions'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
       - name: 🪞 Generate mirror
+        id: generate
         env:
           EXCLUDE_NEWER: ${{ inputs.exclude-newer }}
           EXCLUDE_NEWER_PACKAGE: ${{ inputs.exclude-newer-package }}
@@ -57,18 +63,28 @@ jobs:
           FILES_REGEX: ${{ inputs.files-regex }}
         run: |
           set -euo pipefail
+          base=$(git rev-parse HEAD)
+          echo "base=$base" >>"$GITHUB_OUTPUT"
           options=(--exclude-newer "$EXCLUDE_NEWER")
           while IFS= read -r line; do
             if [[ -n "$line" ]]; then options+=(--exclude-newer-package "$line"); fi
           done <<<"$EXCLUDE_NEWER_PACKAGE"
           uvx -p 3.15 "${options[@]}" --from pre-commit-mirror-maker==1.14.0 pre-commit-mirror . \
             --language=python --package-name="$PACKAGE_NAME" --files-regex "$FILES_REGEX"
+          if [[ "$(git rev-parse HEAD)" == "$base" ]]; then
+            echo 'No new mirror versions'
+            echo 'mirrored=false' >>"$GITHUB_OUTPUT"
+          else
+            echo 'mirrored=true' >>"$GITHUB_OUTPUT"
+          fi
       - name: 📝 Update README with current version
+        if: ${{ steps.generate.outputs.mirrored == 'true' }}
         run: |
           set -euo pipefail
           version=$(cat .version)
           sed -i "s/rev: \".*\"/rev: \"v$version\"/" README.md
       - name: 💅 Format generated files
+        if: ${{ steps.generate.outputs.mirrored == 'true' }}
         env:
           EXCLUDE_NEWER: ${{ inputs.exclude-newer }}
           EXCLUDE_NEWER_PACKAGE: ${{ inputs.exclude-newer-package }}
@@ -101,52 +117,65 @@ jobs:
         run: gh auth setup-git --hostname github.com --force
       - name: 🔄 Commit mirror changes
         id: commit
+        if: ${{ steps.generate.outputs.mirrored == 'true' }}
         env:
+          BASE: ${{ steps.generate.outputs.base }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           git add -A
-          if git diff --cached --quiet; then
-            echo 'No mirror changes to commit'
-            exit 0
+          # Folds the README and formatting changes into the newest mirror commit; its tag moves locally only.
+          if ! git diff --cached --quiet; then
+            git commit --quiet --amend --no-edit
+            git tag --force "v$(cat .version)"
           fi
-          version=$(cat .version)
-          status=0
-          git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null || status=$?
-          case "$status" in
-          0)
-            git fetch --quiet --no-tags origin "refs/tags/v$version:refs/tags/v$version"
-            published=$(git rev-parse "v$version^{tree}")
-            regenerated=$(git write-tree)
-            if [[ "$published" != "$regenerated" ]]; then
-              echo "::error::v$version is published with a different mirror tree ($published), the regenerated tree is $regenerated; bump the package version to publish new content" >&2
-              exit 1
-            fi
-            echo "::notice::v$version is already published with identical mirror content, nothing to push"
-            exit 0
-            ;;
-          2) ;;
-          *)
-            echo "::error::could not read tags from origin, git exited with $status" >&2
-            exit "$status"
-            ;;
-          esac
-          git -c user.name='Github Actions' \
-            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-            commit -m "Mirror: $version"
-          echo "version=$version" >>"$GITHUB_OUTPUT"
-      - name: 🚀 Push mirror commit and tag
-        if: ${{ github.ref == 'refs/heads/main' && steps.commit.outputs.version != '' }}
+          mapfile -t commits < <(git rev-list --reverse "$BASE..HEAD")
+          tags=()
+          for commit in "${commits[@]}"; do
+            tags+=("$(git tag --points-at "$commit")")
+          done
+          pushed=()
+          for tag in "${tags[@]}"; do
+            status=0
+            git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null || status=$?
+            case "$status" in
+            0)
+              git fetch --quiet --no-tags origin "refs/tags/$tag"
+              published=$(git rev-parse 'FETCH_HEAD^{tree}')
+              regenerated=$(git rev-parse "$tag^{tree}")
+              if [[ "$published" != "$regenerated" ]]; then
+                echo "::error::$tag is published with a different mirror tree ($published), the regenerated tree is $regenerated; bump the package version to publish new content" >&2
+                exit 1
+              fi
+              echo "::notice::$tag is already published with identical mirror content, not pushing it"
+              ;;
+            2) pushed+=("$tag") ;;
+            *)
+              echo "::error::could not read tags from origin, git exited with $status" >&2
+              exit "$status"
+              ;;
+            esac
+          done
+          echo "tags=${pushed[*]}" >>"$GITHUB_OUTPUT"
+      - name: 🚀 Push mirror commits and tags
+        if: ${{ github.ref == 'refs/heads/main' && steps.commit.outputs.tags != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.commit.outputs.version }}
+          TAGS: ${{ steps.commit.outputs.tags }}
         run: |
           set -euo pipefail
-          git tag "v$VERSION"
-          git push --atomic origin HEAD:refs/heads/main "refs/tags/v$VERSION"
-      - name: 🎉 Create GitHub release
-        if: ${{ github.ref == 'refs/heads/main' && steps.commit.outputs.version != '' }}
+          read -r -a tags <<<"$TAGS"
+          refs=()
+          for tag in "${tags[@]}"; do refs+=("refs/tags/$tag"); done
+          git push --atomic origin HEAD:refs/heads/main "${refs[@]}"
+      - name: 🎉 Create GitHub releases
+        if: ${{ github.ref == 'refs/heads/main' && steps.commit.outputs.tags != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.commit.outputs.version }}
-        run: gh release create "v$VERSION" --generate-notes
+          TAGS: ${{ steps.commit.outputs.tags }}
+        run: |
+          set -euo pipefail
+          read -r -a tags <<<"$TAGS"
+          for tag in "${tags[@]}"; do
+            gh release create "$tag" --generate-notes
+          done
