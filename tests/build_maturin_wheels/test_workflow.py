@@ -42,13 +42,20 @@ def test_artifact_names_match_the_callers_names(workflow: JsonObject) -> None:
     }
 
 
-def test_release_mode_disables_sccache_for_tags_or_input(workflow: JsonObject) -> None:
+def test_sccache_is_off_for_releases_and_windows(workflow: JsonObject) -> None:
     assert at(workflow, "jobs", "source", "outputs", "release") == (
         "${{ inputs.release-build || startsWith(github.ref, 'refs/tags/') }}"
     )
     assert at(step(workflow, "build", "🏗️ Build wheels"), "with", "sccache") == (
-        "${{ needs.source.outputs.release != 'true' }}"
+        "${{ needs.source.outputs.release != 'true' && !startsWith(matrix.os, 'windows') }}"
     )
+
+
+def test_interpreter_is_passed_only_for_entries_that_name_one(workflow: JsonObject) -> None:
+    args = text(at(step(workflow, "build", "🏗️ Build wheels"), "with", "args"))
+
+    assert "${{ matrix.python && format('--interpreter {0}', matrix.python) || '' }}" in args
+    assert "'3.15'" not in args
 
 
 def test_post_build_command_runs_after_maturin_and_before_upload(workflow: JsonObject) -> None:
