@@ -14,39 +14,12 @@ runs:
       id: config
       if: inputs.allowed-paths == ''
       uses: $/read-towncrier-config
-    - name: 🔍 Check release patch paths
-      if: inputs.allowed-paths == ''
-      shell: bash
-      env:
-        CHANGELOG: ${{ steps.config.outputs.changelog }}
-        FRAGMENTS: ${{ steps.config.outputs.fragments }}
-      run: |
-        set -euo pipefail
-        # shellcheck disable=SC1091 # GitHub supplies this Action path at runtime.
-        source "$GITHUB_ACTION_PATH/../tools/plural.sh"
-        git diff --cached --name-status --no-renames -z >"$RUNNER_TEMP/release-paths"
-        removed=0
-        while IFS= read -r -d '' status && IFS= read -r -d '' path; do
-          if [[ "$path" == "$CHANGELOG" && ("$status" == A || "$status" == M) ]]; then
-            echo "Release patch path: $status $path (the changelog)"
-            continue
-          fi
-          if [[ "$path" != "$FRAGMENTS/"* ]]; then
-            echo "::error::unexpected release path: $path" >&2
-            exit 1
-          fi
-          if [[ "$status" != D ]]; then
-            echo "::error::unexpected release path status: $status $path" >&2
-            exit 1
-          fi
-          removed=$((removed + 1))
-        done <"$RUNNER_TEMP/release-paths"
-        echo "Release patch paths: $(plural "$removed" fragment) removed from $FRAGMENTS"
-    - name: 🔍 Check release patch paths against the allowlist
-      if: inputs.allowed-paths != ''
+    - name: 🔍 Check release patch paths and file modes
       shell: bash
       env:
         ALLOWED_PATHS: ${{ inputs.allowed-paths }}
+        CHANGELOG: ${{ steps.config.outputs.changelog }}
+        FRAGMENTS: ${{ steps.config.outputs.fragments }}
       run: |
         set -euo pipefail
         # shellcheck disable=SC1091 # GitHub supplies this Action path at runtime.
@@ -57,36 +30,38 @@ runs:
             patterns+=("$pattern")
           fi
         done <<<"$ALLOWED_PATHS"
-        git diff --cached --name-status --no-renames -z >"$RUNNER_TEMP/release-paths"
+        git diff --cached --raw --no-renames -z >"$RUNNER_TEMP/release-changes"
         count=0
-        while IFS= read -r -d '' status && IFS= read -r -d '' path; do
-          echo "Release patch path: $status $path"
-          matched=false
-          for pattern in "${patterns[@]}"; do
-            # shellcheck disable=SC2053 # The patterns are globs, matched on purpose.
-            if [[ "$path" == $pattern ]]; then
-              matched=true
-              break
-            fi
-          done
-          if [[ "$matched" != true ]]; then
-            echo "::error::unexpected release path: $path" >&2
-            exit 1
-          fi
-          count=$((count + 1))
-        done <"$RUNNER_TEMP/release-paths"
-        echo "Release patch paths: $(plural "$count" path) within the allowlist"
-    - name: 🔍 Check release patch file modes
-      shell: bash
-      run: |
-        set -euo pipefail
-        # shellcheck disable=SC1091 # GitHub supplies this Action path at runtime.
-        source "$GITHUB_ACTION_PATH/../tools/plural.sh"
-        git diff --cached --raw --no-renames -z >"$RUNNER_TEMP/release-modes"
-        count=0
+        removed=0
         while IFS= read -r -d '' metadata && IFS= read -r -d '' path; do
           read -ra fields <<<"$metadata"
-          case "${fields[4]}" in
+          status=${fields[4]}
+          if [[ -n "$ALLOWED_PATHS" ]]; then
+            echo "Release patch path: $status $path"
+            matched=false
+            for pattern in "${patterns[@]}"; do
+              # shellcheck disable=SC2053 # The patterns are globs, matched on purpose.
+              if [[ "$path" == $pattern ]]; then
+                matched=true
+                break
+              fi
+            done
+            if [[ "$matched" != true ]]; then
+              echo "::error::unexpected release path: $path" >&2
+              exit 1
+            fi
+          elif [[ "$path" == "$CHANGELOG" && ("$status" == A || "$status" == M) ]]; then
+            echo "Release patch path: $status $path (the changelog)"
+          elif [[ "$path" != "$FRAGMENTS/"* ]]; then
+            echo "::error::unexpected release path: $path" >&2
+            exit 1
+          elif [[ "$status" != D ]]; then
+            echo "::error::unexpected release path status: $status $path" >&2
+            exit 1
+          else
+            removed=$((removed + 1))
+          fi
+          case "$status" in
           A)
             old_mode=000000
             new_mode=100644
@@ -113,5 +88,10 @@ runs:
             exit 1
           fi
           count=$((count + 1))
-        done <"$RUNNER_TEMP/release-modes"
+        done <"$RUNNER_TEMP/release-changes"
+        if [[ -n "$ALLOWED_PATHS" ]]; then
+          echo "Release patch paths: $(plural "$count" path) within the allowlist"
+        else
+          echo "Release patch paths: $(plural "$removed" fragment) removed from $FRAGMENTS"
+        fi
         echo "Release patch file modes: $(plural "$count" path), each a non-executable regular file or a deletion"

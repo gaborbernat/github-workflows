@@ -5,13 +5,26 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 import pytest
-from conftest import WORKFLOWS, JsonObject, JsonValue, at, load_yaml, run, run_workflow_step, workflow_env
+from conftest import (
+    WORKFLOWS,
+    JsonObject,
+    JsonValue,
+    at,
+    load_yaml,
+    mapping,
+    run,
+    run_workflow_step,
+    step,
+    steps,
+    workflow_env,
+)
 
 if TYPE_CHECKING:
     import subprocess
 
 _WORKFLOW: Final[str] = "update-python-dependencies.yaml"
 _PATCH: Final[str] = "📝 Write maintenance patch"
+_GATE: Final[str] = "🧹 Reject hook failures that changed no file"
 _DEFAULTS: Final[dict[str, str]] = {
     "inputs.allowed-paths": "docs/*.md",
     "inputs.cooldown": "7 days",
@@ -245,6 +258,53 @@ def test_patch_step_writes_every_change_including_new_files(repository: Path, tm
     patch = (tmp_path / "maintenance.patch").read_text()
     assert "diff --git a/pylock.toml b/pylock.toml" in patch
     assert "diff --git a/docs/new.md b/docs/new.md" in patch
+
+
+def test_locked_tools_install_beside_the_bump(workflow: JsonObject) -> None:
+    names = [item.get("name") for item in steps(workflow, "generate")]
+    assert step(workflow, "generate", "📦 Install locked release tools")["background"] == "true"
+    assert step(workflow, "generate", "⏳ Wait for locked release tools")["wait"] == "tools"
+    assert (
+        names.index("📦 Install locked release tools")
+        < names.index("📦 Bump dependency floors")
+        < names.index("⏳ Wait for locked release tools")
+        < names.index("🔒 Refresh release lock")
+    )
+
+
+def test_repository_hooks_run_once_after_the_lock_refresh(workflow: JsonObject) -> None:
+    names = [item.get("name") for item in steps(workflow, "generate")]
+    runs = [
+        item for item in steps(workflow, "generate") if mapping(item.get("with", {})).get("args") == "run --all-files"
+    ]
+    assert len(runs) == 1
+    assert step(workflow, "generate", "🧹 Install prek hooks")["background"] == "true"
+    assert step(workflow, "generate", "🧹 Run repository hooks")["continue-on-error"] == "true"
+    assert step(workflow, "generate", _GATE)["if"] == "steps.hooks.outcome == 'failure'"
+    assert (
+        names.index("🔒 Refresh release lock")
+        < names.index("⏳ Wait for prek hooks")
+        < names.index("🧹 Run repository hooks")
+        < names.index(_GATE)
+    )
+
+
+def test_hook_gate_rejects_a_failure_that_changed_nothing(repository: Path, tmp_path: Path) -> None:
+    result, _ = run_workflow_step(
+        _WORKFLOW, "generate", _GATE, cwd=repository, runner_temp=tmp_path, values=_DEFAULTS, env={}
+    )
+    assert result.returncode != 0
+    assert "repository hooks failed without changing a file" in result.stderr
+
+
+def test_hook_gate_accepts_a_failure_that_rewrote_files(repository: Path, tmp_path: Path) -> None:
+    (repository / "pylock.toml").write_text("staged\n")
+    run(repository, "git", "add", "--all")
+    (repository / "pylock.toml").write_text("rewritten by a hook\n")
+    result, _ = run_workflow_step(
+        _WORKFLOW, "generate", _GATE, cwd=repository, runner_temp=tmp_path, values=_DEFAULTS, env={}
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_generate_job_is_read_only(workflow: JsonObject) -> None:

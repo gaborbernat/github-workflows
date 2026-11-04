@@ -17,12 +17,16 @@ def test_github_release_verifies_pypi_before_publishing(workflow: JsonObject) ->
     names = [item["name"] for item in steps(workflow, "github-release")]
 
     assert names == [
-        "🐍 Install uv and Python",
         "📩 Download distributions",
         "📩 Download release notes",
+        "🐍 Install uv and Python",
+        "⏳ Wait for distributions",
+        "⏳ Wait for release notes",
         "🔍 Verify PyPI artifacts",
         "🚀 Publish GitHub release",
     ]
+    assert step(workflow, "github-release", "📩 Download distributions")["background"] == "true"
+    assert step(workflow, "github-release", "📩 Download release notes")["background"] == "true"
 
 
 def test_github_release_verifies_the_requested_version(workflow: JsonObject) -> None:

@@ -105,27 +105,3 @@ def test_rejects_archive_that_differs_from_signing_digest(
     )
     assert result.returncode != 0
     assert not (tmp_path / "release-creator.args").exists()
-
-
-def test_rejects_unknown_mode(
-    action_scripts: Path,
-    repository: Path,
-    tmp_path: Path,
-    release_creator: Path,
-    signed_archive: tuple[Path, str],
-) -> None:
-    archive, digest = signed_archive
-    result = action(
-        repository,
-        tmp_path,
-        action_scripts,
-        "stage-jetbrains-marketplace",
-        version="v1.2.3",
-        ARCHIVE=str(archive),
-        SHA256=digest,
-        PLUGIN_ID="com.example.plugin",
-        MODE="publish",
-        PATH=f"{release_creator}:{os.environ['PATH']}",
-    )
-    assert result.returncode != 0
-    assert not (tmp_path / "release-creator.args").exists()

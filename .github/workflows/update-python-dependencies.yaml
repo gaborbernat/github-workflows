@@ -80,13 +80,6 @@ jobs:
           version: latest-known
           python-version: "3.15"
           enable-cache: false
-      - name: 📦 Install locked release tools
-        uses: $/install-locked-tools
-        with:
-          groups: release-prepare
-          venv: ${{ runner.temp }}/release-tools
-          exclude-newer: ${{ inputs.exclude-newer }}
-          exclude-newer-package: ${{ inputs.exclude-newer-package }}
       - id: inputs
         name: ⚙️ Validate inputs and set the cutoffs
         env:
@@ -179,6 +172,15 @@ jobs:
             printf '%s\n' pylock.toml "${bumped[@]}" "$ALLOWED_EXTRA"
             echo 'ALLOWED_PATHS_EOF'
           } >>"$GITHUB_OUTPUT"
+      - id: tools
+        name: 📦 Install locked release tools
+        uses: $/install-locked-tools
+        with:
+          groups: release-prepare
+          venv: ${{ runner.temp }}/release-tools
+          exclude-newer: ${{ inputs.exclude-newer }}
+          exclude-newer-package: ${{ inputs.exclude-newer-package }}
+        background: true
       - name: 📦 Bump dependency floors
         env:
           CUTOFF: ${{ steps.inputs.outputs.cutoff }}
@@ -216,20 +218,38 @@ jobs:
             echo "Bumping ${files[*]}"
             "${bump[@]}" "${args[@]}" --file "${files[@]}"
           done <"$RUNNER_TEMP/file-groups"
+      - name: ⏳ Wait for locked release tools
+        wait: tools
+      - id: install-hooks
+        name: 🧹 Install prek hooks
+        uses: $/cooled-prek
+        with:
+          args: install-hooks
+        background: true
       - name: 🔒 Refresh release lock
         uses: $/refresh-release-lock
         with:
           exclude-newer: ${{ inputs.exclude-newer }}
           exclude-newer-package: ${{ inputs.exclude-newer-package }}
-      - name: 🧹 Run repository hooks
+      - name: ⏳ Wait for prek hooks
+        wait: install-hooks
+      - name: 📑 Stage dependency changes
+        run: git add --all
+      - id: hooks
+        name: 🧹 Run repository hooks
         continue-on-error: true
         uses: $/cooled-prek
         with:
           args: run --all-files
-      - name: 🧹 Confirm repository hooks are stable
-        uses: $/cooled-prek
-        with:
-          args: run --all-files
+      - name: 🧹 Reject hook failures that changed no file
+        if: steps.hooks.outcome == 'failure'
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo '::error::repository hooks failed without changing a file' >&2
+            exit 1
+          fi
+          echo 'Repository hooks changed files before failing; the pull request checks verify the result'
       - id: patch
         name: 📝 Write maintenance patch
         run: |

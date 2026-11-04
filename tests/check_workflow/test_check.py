@@ -62,16 +62,86 @@ def test_test_run_reuses_built_environment_with_inputs() -> None:
     assert at(suite, "env", "DIFF_AGAINST") == "${{ inputs.diff-against }}"
 
 
-def test_python_is_installed_only_for_rows_that_name_one() -> None:
-    install = step(WORKFLOW, "test", "🐍 Install Python")
-    assert install["if"] == "${{ matrix.python }}"
-    assert install["env"] == {"PYTHON": "${{ matrix.python }}"}
+def test_installs_run_in_background_and_are_joined_before_the_suite() -> None:
+    names = [item["name"] for item in steps(WORKFLOW, "test")]
+    joins = {
+        "📦 Install apt packages": "⏳ Wait for apt packages",
+        "📦 Install tox": "⏳ Wait for tox",
+        "🐍 Install Python": "⏳ Wait for Python",
+    }
+
+    for install, join in joins.items():
+        assert step(WORKFLOW, "test", install)["background"] == "true"
+        assert names.index(install) < names.index(join) < names.index("📦 Set up test suite")
+        assert step(WORKFLOW, "test", join)["wait"] == step(WORKFLOW, "test", install)["id"]
+    assert names.index("🐍 Install uv and Python") < names.index("📦 Install tox")
 
 
-def test_apt_packages_install_on_linux_only() -> None:
-    install = step(WORKFLOW, "test", "📦 Install apt packages")
-    assert install["if"] == "${{ inputs.apt-packages != '' && runner.os == 'Linux' }}"
-    assert install["env"] == {"APT_PACKAGES": "${{ inputs.apt-packages }}"}
+@pytest.mark.parametrize(
+    ("python", "expected"),
+    [
+        pytest.param("", [], id="row-without-python"),
+        pytest.param(
+            "3.14",
+            [["python", "install", "--python-preference", "only-managed", "3.14"]],
+            id="row-with-python",
+        ),
+    ],
+)
+def test_python_is_installed_only_for_rows_that_name_one(
+    tmp_path: Path, python: str, expected: list[list[str]]
+) -> None:
+    calls = _run_install(tmp_path, "🐍 Install Python", {"PYTHON": python}, ("uv",))
+    assert calls.get("uv", []) == expected
+
+
+@pytest.mark.parametrize(
+    ("runner_os", "packages", "expected"),
+    [
+        pytest.param(
+            "Linux",
+            "libfoo libbar",
+            [["apt-get", "update"], ["apt-get", "install", "-y", "libfoo", "libbar"]],
+            id="linux",
+        ),
+        pytest.param("Linux", "", [], id="linux-without-packages"),
+        pytest.param("Windows", "libfoo", [], id="windows"),
+    ],
+)
+def test_apt_packages_install_on_linux_only(
+    tmp_path: Path, runner_os: str, packages: str, expected: list[list[str]]
+) -> None:
+    calls = _run_install(
+        tmp_path,
+        "📦 Install apt packages",
+        {"APT_PACKAGES": packages, "RUNNER_OS": runner_os},
+        ("sudo",),
+    )
+    assert calls.get("sudo", []) == expected
+
+
+def _run_install(
+    tmp_path: Path, name: str, env: dict[str, str], commands: tuple[str, ...]
+) -> dict[str, list[list[str]]]:
+    stub = tmp_path / "bin"
+    stub.mkdir()
+    recorded = {command: tmp_path / f"{command}-calls" for command in commands}
+    for command, calls in recorded.items():
+        (stub / command).write_text(f'#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >>"{calls}"\n')
+        (stub / command).chmod(0o755)
+    result = subprocess.run(
+        ["bash", "-c", text(step(WORKFLOW, "test", name)["run"])],
+        env={"PATH": f"{stub}{os.pathsep}{os.environ['PATH']}"} | env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    return {
+        command: [line.split() for line in calls.read_text().splitlines()]
+        for command, calls in recorded.items()
+        if calls.exists()
+    }
 
 
 def test_coverage_upload_is_opt_in_and_named_per_job() -> None:

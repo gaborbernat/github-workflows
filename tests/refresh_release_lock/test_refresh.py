@@ -196,7 +196,7 @@ def test_refresh_writes_patch_for_stale_lock(
 
     assert result.returncode == 0, result.stderr
     assert outputs["changed"] == "true"
-    patch = (tmp_path / "lock.patch").read_text()
+    patch = (tmp_path / "maintenance.patch").read_text()
     assert "diff --git a/pylock.toml b/pylock.toml" in patch
     assert 'name = "six"' in patch
     assert "diff --git a/pyproject.toml" not in patch

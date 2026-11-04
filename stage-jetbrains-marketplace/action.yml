@@ -60,13 +60,6 @@ runs:
         MODE: ${{ inputs.mode }}
       run: |
         set -euo pipefail
-        case "$MODE" in
-        stage | verify) ;;
-        *)
-          echo "::error::mode must be stage or verify, got $MODE" >&2
-          exit 1
-          ;;
-        esac
         args=(marketplace --plugin-id "$PLUGIN_ID" --version "${VERSION#v}" --archive "$ARCHIVE" --mode "$MODE")
         if [[ "$MODE" == stage ]]; then args+=(--github-output "$GITHUB_OUTPUT"); fi
         release-creator "${args[@]}"

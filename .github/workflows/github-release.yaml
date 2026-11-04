@@ -47,6 +47,21 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: 📩 Download distributions
+        id: distributions
+        background: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: ${{ inputs.artifact-pattern }}
+          path: dist
+          merge-multiple: true
+      - name: 📩 Download release notes
+        id: notes
+        background: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ inputs.notes-artifact-id }}
+          path: ${{ runner.temp }}
       - name: 🐍 Install uv and Python
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
@@ -54,17 +69,10 @@ jobs:
           python-version: "3.15"
           enable-cache: false
           ignore-empty-workdir: true
-      - name: 📩 Download distributions
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          pattern: ${{ inputs.artifact-pattern }}
-          path: dist
-          merge-multiple: true
-      - name: 📩 Download release notes
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          artifact-ids: ${{ inputs.notes-artifact-id }}
-          path: ${{ runner.temp }}
+      - name: ⏳ Wait for distributions
+        wait: distributions
+      - name: ⏳ Wait for release notes
+        wait: notes
       - name: 🔍 Verify PyPI artifacts
         uses: $/reconcile-pypi-artifacts
         with:

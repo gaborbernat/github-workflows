@@ -65,6 +65,24 @@ def test_pre_build_command_runs_once_in_the_source_job(workflow: JsonObject) -> 
     assert "🏷️ Run pre-build command" not in [item["name"] for item in steps(workflow, "build")]
 
 
+@pytest.mark.parametrize(
+    ("job", "first_use"),
+    [
+        pytest.param("build", "🏗️ Build wheels", id="wheels"),
+        pytest.param("sdist", "📦 Export locked build constraints", id="sdist"),
+    ],
+)
+def test_source_download_overlaps_uv_setup_and_is_joined_before_use(
+    workflow: JsonObject, job: str, first_use: str
+) -> None:
+    names = [item["name"] for item in steps(workflow, job)]
+
+    assert step(workflow, job, "📩 Download source")["background"] == "true"
+    assert names.index("📩 Download source") < names.index("🐍 Install uv and Python")
+    assert names.index("🐍 Install uv and Python") < names.index("⏳ Wait for source") < names.index(first_use)
+    assert step(workflow, job, "⏳ Wait for source")["wait"] == "download"
+
+
 def test_no_job_requests_a_write_token(workflow: JsonObject) -> None:
     for name, job in mapping(workflow["jobs"]).items():
         assert mapping(job).get("permissions", {}) in ({}, {"contents": "read"}), name

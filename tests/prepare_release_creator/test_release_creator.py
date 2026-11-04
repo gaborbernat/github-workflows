@@ -20,6 +20,7 @@ def test_assemble_holds_no_write_token(workflow: JsonObject) -> None:
 def test_push_validates_before_minting_the_token(workflow: JsonObject) -> None:
     names = [item.get("name") for item in steps(workflow, "push")]
 
+    assert names.index("⏳ Wait for release patch") < names.index("⚙️ Apply release patch")
     assert names.index("⚙️ Apply release patch") < names.index("🔑 Create release App token")
     assert names[-1] == "🏷️ Commit and tag release"
 

@@ -55,23 +55,30 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: 📦 Install apt packages
+        id: apt
+        background: true
+        shell: bash
+        env:
+          APT_PACKAGES: ${{ inputs.apt-packages }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$APT_PACKAGES" || "$RUNNER_OS" != Linux ]]; then
+            echo 'Apt packages skipped: the apt-packages input is empty or the runner is not Linux'
+            exit 0
+          fi
+          read -ra packages <<<"$APT_PACKAGES"
+          sudo apt-get update
+          sudo apt-get install -y "${packages[@]}"
       - name: 🐍 Install uv and Python
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version: latest-known
           python-version: "3.15"
           enable-cache: false
-      - name: 📦 Install apt packages
-        if: ${{ inputs.apt-packages != '' && runner.os == 'Linux' }}
-        shell: bash
-        env:
-          APT_PACKAGES: ${{ inputs.apt-packages }}
-        run: |
-          set -euo pipefail
-          read -ra packages <<<"$APT_PACKAGES"
-          sudo apt-get update
-          sudo apt-get install -y "${packages[@]}"
       - name: 📦 Install tox
+        id: tox
+        background: true
         shell: bash
         env:
           TOX_INSTALL: ${{ inputs.tox-install }}
@@ -87,11 +94,24 @@ jobs:
           echo "Installing ${spec[*]} with uploads older than $EXCLUDE_NEWER"
           uv tool install --python-preference only-managed --python 3.15 "${options[@]}" "${spec[@]}"
       - name: 🐍 Install Python
-        if: ${{ matrix.python }}
+        id: python
+        background: true
         shell: bash
         env:
           PYTHON: ${{ matrix.python }}
-        run: uv python install --python-preference only-managed "$PYTHON"
+        run: |
+          set -euo pipefail
+          if [[ -z "$PYTHON" ]]; then
+            echo 'Python install skipped: the matrix row names no python'
+            exit 0
+          fi
+          uv python install --python-preference only-managed "$PYTHON"
+      - name: ⏳ Wait for apt packages
+        wait: apt
+      - name: ⏳ Wait for tox
+        wait: tox
+      - name: ⏳ Wait for Python
+        wait: python
       - name: 📦 Set up test suite
         shell: bash
         env:

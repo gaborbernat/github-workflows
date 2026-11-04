@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 import pytest
-from conftest import WORKFLOWS, JsonObject, at, load_yaml, mapping, run, run_workflow_step, steps, text, workflow_step
+from conftest import WORKFLOWS, JsonObject, at, load_yaml, mapping, run, run_workflow_step, steps, text
 
 if TYPE_CHECKING:
     import subprocess
@@ -140,8 +140,8 @@ def test_check_rejects_empty_allowed_paths(repository: Path, tmp_path: Path) -> 
     assert "allowed-paths lists no pattern" in result.stderr
 
 
-def test_writer_repeats_the_validation_step() -> None:
-    assert workflow_step(_WORKFLOW, "validate", _CHECK)["run"] == workflow_step(_WORKFLOW, "open", _CHECK)["run"]
+def test_writer_trusts_the_validated_digest(workflow: JsonObject) -> None:
+    assert _CHECK not in [item.get("name") for item in steps(workflow, "open")]
 
 
 def test_digest_step_records_sha256(repository: Path, tmp_path: Path) -> None:
@@ -277,6 +277,21 @@ def test_open_job_is_gated_on_a_clean_validation(workflow: JsonObject, key: str,
     assert at(workflow, "jobs", "open", key) == expected
 
 
-def test_app_token_is_minted_after_the_check(workflow: JsonObject) -> None:
+def test_app_token_is_minted_after_the_digest_is_verified(workflow: JsonObject) -> None:
     names = [item.get("name") for item in steps(workflow, "open")]
-    assert names.index("🔑 Create release App token") > names.index(_CHECK)
+    assert names.index("🔑 Create release App token") > names.index("🔍 Verify the validated patch digest")
+    assert names.index("🔒 Apply maintenance patch") > names.index("🔍 Verify the validated patch digest")
+
+
+def test_body_step_writes_the_requested_pull_request_body(repository: Path, tmp_path: Path) -> None:
+    result, _ = run_workflow_step(
+        _WORKFLOW,
+        "open",
+        "📝 Write maintenance pull request body",
+        cwd=repository,
+        runner_temp=tmp_path,
+        values=values(tmp_path, **{"inputs.body": "Refresh release tools."}),
+        env={},
+    )
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "pull-request.md").read_text() == "Refresh release tools.\n"
