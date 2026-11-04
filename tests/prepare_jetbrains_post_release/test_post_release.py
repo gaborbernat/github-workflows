@@ -1,14 +1,9 @@
-from __future__ import annotations
-
 import os
 import subprocess
 from pathlib import Path
-from typing import Final
 
 import pytest
 from conftest import action, run
-
-GH_STUB: Final[str] = "#!/usr/bin/env bash\necho 42\n"
 
 
 @pytest.fixture
@@ -16,7 +11,7 @@ def gh_stub(tmp_path: Path) -> Path:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     script = bin_dir / "gh"
-    script.write_text(GH_STUB)
+    script.write_text("#!/usr/bin/env bash\necho 42\n")
     script.chmod(0o755)
     return bin_dir
 
@@ -27,30 +22,6 @@ def plugin_repository(repository: Path) -> Path:
     run(repository, "git", "add", "gradle.properties")
     run(repository, "git", "commit", "-m", "Add plugin version")
     return repository
-
-
-def _prepare(
-    repository: Path,
-    tmp_path: Path,
-    action_scripts: Path,
-    gh_stub: Path,
-    tag: str,
-) -> tuple[subprocess.CompletedProcess[str], dict[str, str]]:
-    outputs: dict[str, str] = {}
-    result = action(
-        repository,
-        tmp_path,
-        action_scripts,
-        "prepare-jetbrains-post-release",
-        outputs,
-        version=tag,
-        TAG=tag,
-        APP_SLUG="tox-dev-plugin-release",
-        GITHUB_TOKEN="token",
-        OUTPUT_DIR=str(tmp_path / "post-release"),
-        PATH=f"{gh_stub}:{os.environ['PATH']}",
-    )
-    return result, outputs
 
 
 def test_commits_next_patch_version_and_writes_manifest(
@@ -79,6 +50,30 @@ def test_commits_next_patch_version_and_writes_manifest(
         "tox-dev-plugin-release[bot] <42+tox-dev-plugin-release[bot]@users.noreply.github.com>",
         "Bump version to 1.2.4-dev after v1.2.3",
     ]
+
+
+def _prepare(
+    repository: Path,
+    tmp_path: Path,
+    action_scripts: Path,
+    gh_stub: Path,
+    tag: str,
+) -> tuple[subprocess.CompletedProcess[str], dict[str, str]]:
+    outputs: dict[str, str] = {}
+    result = action(
+        repository,
+        tmp_path,
+        action_scripts,
+        "prepare-jetbrains-post-release",
+        outputs,
+        version=tag,
+        TAG=tag,
+        APP_SLUG="tox-dev-plugin-release",
+        GITHUB_TOKEN="token",
+        OUTPUT_DIR=str(tmp_path / "post-release"),
+        PATH=f"{gh_stub}:{os.environ['PATH']}",
+    )
+    return result, outputs
 
 
 def test_leaves_candidate_empty_when_version_already_matches(

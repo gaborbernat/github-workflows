@@ -1,29 +1,22 @@
-from __future__ import annotations
-
 import os
 import subprocess
 from pathlib import Path
+from typing import Final
 
 import pytest
-import yaml
-from conftest import run
+from conftest import WORKFLOWS, at, load_yaml, run, step, step_list, steps, text
 from pytest_httpserver import HTTPServer
 
-
-@pytest.fixture(scope="session")
-def upgrade_scripts(action_scripts: Path) -> Path:
-    return action_scripts
+ROOT: Final = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture(scope="session")
 def publish_scripts(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    source = Path(__file__).resolve().parents[2]
     scripts = tmp_path_factory.mktemp("publish-steps")
-    workflow = yaml.safe_load((source / ".github/workflows/upgrade-release-tools.yaml").read_text())
-    for step in workflow["jobs"]["publish"]["steps"]:
-        if "run" in step:
-            name = step.get("id", step["name"].split(" ", 1)[1]).replace(" ", "-").lower()
-            (scripts / f"publish-{name}.sh").write_text(step["run"])
+    for item in steps(load_yaml(WORKFLOWS / "upgrade-release-tools.yaml"), "publish"):
+        if "run" in item:
+            label = text(item.get("id", text(item["name"]).split(" ", 1)[1])).replace(" ", "-").lower()
+            (scripts / f"publish-{label}.sh").write_text(text(item["run"]))
     return scripts
 
 
@@ -47,14 +40,14 @@ def lock_repository(tmp_path: Path) -> Path:
     return repository
 
 
-def test_upgrade_emits_patch_for_lock_change(lock_repository: Path, tmp_path: Path, upgrade_scripts: Path) -> None:
+def test_upgrade_emits_patch_for_lock_change(lock_repository: Path, tmp_path: Path, action_scripts: Path) -> None:
     (lock_repository / "pylock.toml").write_text('lock-version = "1.0"\n')
     run(lock_repository, "git", "add", ".")
     run(lock_repository, "git", "commit", "-m", "Add lock")
     (lock_repository / "pylock.toml").write_text((lock_repository / "pylock.toml").read_text() + "\n")
     result = execute(
         lock_repository,
-        refresh_script(upgrade_scripts, "lock"),
+        refresh_script(action_scripts, "lock"),
         tmp_path,
         MODE="refresh",
         GITHUB_OUTPUT=str(tmp_path / "output"),
@@ -87,11 +80,7 @@ def test_upgrade_checks_lock_patch_path(
     run(lock_repository, "git", "add", ".")
     run(lock_repository, "git", "commit", "-m", "Add file")
     (lock_repository / path).write_text("after\n")
-    patch = run(lock_repository, "git", "diff", "--binary", "--", path).stdout
-    run(lock_repository, "git", "restore", path)
-    patch_dir = tmp_path / "release-tools-lock"
-    patch_dir.mkdir()
-    (patch_dir / "lock.patch").write_text(patch)
+    _save_patch(lock_repository, tmp_path, path)
     result = execute(
         lock_repository,
         publish_scripts / "publish-check-artifact-patch-paths.sh",
@@ -103,24 +92,21 @@ def test_upgrade_checks_lock_patch_path(
     assert run(lock_repository, "git", "status", "--porcelain").stdout == ""
 
 
-@pytest.mark.parametrize("unsafe_mode", ["executable", "symlink"])
+@pytest.mark.parametrize(
+    "change",
+    [
+        pytest.param("chmod 755 pylock.toml", id="executable"),
+        pytest.param("rm pylock.toml && ln -s other.txt pylock.toml", id="symlink"),
+    ],
+)
 def test_upgrade_rejects_unsafe_file_mode(
-    lock_repository: Path, tmp_path: Path, publish_scripts: Path, unsafe_mode: str
+    lock_repository: Path, tmp_path: Path, publish_scripts: Path, change: str
 ) -> None:
-    target = lock_repository / "pylock.toml"
-    target.write_text("before\n")
+    (lock_repository / "pylock.toml").write_text("before\n")
     run(lock_repository, "git", "add", "pylock.toml")
     run(lock_repository, "git", "commit", "-m", "Add lock")
-    if unsafe_mode == "executable":
-        target.chmod(0o755)
-    else:
-        target.unlink()
-        target.symlink_to("other.txt")
-    patch = run(lock_repository, "git", "diff", "--binary", "--", "pylock.toml").stdout
-    run(lock_repository, "git", "restore", "pylock.toml")
-    patch_dir = tmp_path / "release-tools-lock"
-    patch_dir.mkdir()
-    (patch_dir / "lock.patch").write_text(patch)
+    run(lock_repository, "bash", "-c", change)
+    _save_patch(lock_repository, tmp_path, "pylock.toml")
     applied = execute(lock_repository, publish_scripts / "publish-apply-lock-patch.sh", tmp_path)
     assert applied.returncode == 0, applied.stderr
     result = execute(lock_repository, publish_scripts / "publish-check-dependency-patch-file-mode.sh", tmp_path)
@@ -178,6 +164,22 @@ def test_upgrade_finds_only_own_dependency_pull_request(
     assert (tmp_path / "output").read_text() == "number=18\n"
 
 
+def test_upgrade_checks_cutoff_exceptions_before_refreshing_the_lock() -> None:
+    workflow = load_yaml(WORKFLOWS / "upgrade-release-tools.yaml")
+    names = [item["name"] for item in steps(workflow, "generate-lock")]
+
+    assert step(workflow, "generate-lock", "📅 Check cutoff exception expiry")["uses"] == "$/check-nab-exceptions"
+    assert names.index("📅 Check cutoff exception expiry") < names.index("🔒 Refresh release lock")
+
+
+def _save_patch(repository: Path, tmp_path: Path, path: str) -> None:
+    patch = run(repository, "git", "diff", "--binary", "--", path).stdout
+    run(repository, "git", "restore", path)
+    patch_dir = tmp_path / "release-tools-lock"
+    patch_dir.mkdir()
+    (patch_dir / "lock.patch").write_text(patch)
+
+
 def execute(repository: Path, script: Path, tmp_path: Path, **environment: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["bash", str(script)],
@@ -185,7 +187,7 @@ def execute(repository: Path, script: Path, tmp_path: Path, **environment: str) 
         env=os.environ
         | {
             "RUNNER_TEMP": str(tmp_path),
-            "GITHUB_ACTION_PATH": str(Path(__file__).resolve().parents[2] / "refresh-release-lock"),
+            "GITHUB_ACTION_PATH": str(ROOT / "refresh-release-lock"),
             "ADDITIONAL_LOCK": "",
             "ADDITIONAL_GROUPS": "",
             "ADDITIONAL_SELECTION": "build-or-groups",
@@ -201,18 +203,6 @@ def execute(repository: Path, script: Path, tmp_path: Path, **environment: str) 
 
 
 def refresh_script(scripts: Path, name: str) -> Path:
-    source = Path(__file__).resolve().parents[2]
-    steps = yaml.safe_load((source / "refresh-release-lock/action.yml").read_text())["runs"]["steps"]
-    index = next(index for index, step in enumerate(steps) if step.get("id") == name)
+    action_steps = step_list(at(load_yaml(ROOT / "refresh-release-lock/action.yml"), "runs", "steps"))
+    index = next(index for index, item in enumerate(action_steps) if item.get("id") == name)
     return scripts / f"refresh-release-lock-{index}.sh"
-
-
-def test_upgrade_checks_cutoff_exceptions_before_refreshing_the_lock() -> None:
-    source = Path(__file__).resolve().parents[2]
-    steps = yaml.safe_load((source / ".github/workflows/upgrade-release-tools.yaml").read_text())["jobs"][
-        "generate-lock"
-    ]["steps"]
-    names = [step["name"] for step in steps]
-
-    assert steps[names.index("📅 Check cutoff exception expiry")]["uses"] == "$/check-nab-exceptions"
-    assert names.index("📅 Check cutoff exception expiry") < names.index("🔒 Refresh release lock")

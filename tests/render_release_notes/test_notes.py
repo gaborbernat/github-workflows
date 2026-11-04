@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from pathlib import Path
 from textwrap import dedent
 
@@ -61,6 +59,20 @@ def test_render_release_notes_uses_tagged_changelog(
         [📜 Full Changelog](https://github.com/tox-dev/fixture/compare/0.1.0...0.2.0)
         """,
     )
+
+
+def test_render_release_notes_reports_previous_tag(
+    tagged_repository: Path, tmp_path: Path, action_scripts: Path
+) -> None:
+    result = action(
+        tagged_repository,
+        tmp_path,
+        action_scripts,
+        "render-release-notes",
+        version="0.2.0",
+        TAG="0.2.0",
+    )
+    assert result.returncode == 0, result.stderr
     assert "previous=0.1.0" in (tmp_path / "output").read_text()
 
 

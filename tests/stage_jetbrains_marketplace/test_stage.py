@@ -1,21 +1,9 @@
-from __future__ import annotations
-
 import hashlib
 import os
 from pathlib import Path
-from typing import Final
 
 import pytest
 from conftest import action
-
-STUB: Final[str] = """\
-#!/usr/bin/env bash
-printf '%s\\n' "$@" >"$RUNNER_TEMP/release-creator.args"
-while (($#)); do
-  if [[ "$1" == --github-output ]]; then echo publish=true >>"$2"; fi
-  shift
-done
-"""
 
 
 @pytest.fixture
@@ -23,7 +11,16 @@ def release_creator(tmp_path: Path) -> Path:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     script = bin_dir / "release-creator"
-    script.write_text(STUB)
+    script.write_text(
+        """\
+#!/usr/bin/env bash
+printf '%s\\n' "$@" >"$RUNNER_TEMP/release-creator.args"
+while (($#)); do
+  if [[ "$1" == --github-output ]]; then echo publish=true >>"$2"; fi
+  shift
+done
+"""
+    )
     script.chmod(0o755)
     return bin_dir
 
@@ -36,11 +33,11 @@ def signed_archive(tmp_path: Path) -> tuple[Path, str]:
 
 
 @pytest.mark.parametrize(
-    ("version", "mode", "channel", "publish", "github_output"),
+    ("version", "mode", "expected", "github_output"),
     [
-        pytest.param("v1.2.3", "stage", "", "true", True, id="stable-stage"),
-        pytest.param("v1.2.3-beta.1", "stage", "beta", "true", True, id="beta-stage"),
-        pytest.param("v1.2.3-beta.1", "verify", "beta", "", False, id="beta-verify"),
+        pytest.param("v1.2.3", "stage", {"channel": "", "publish": "true"}, True, id="stable-stage"),
+        pytest.param("v1.2.3-beta.1", "stage", {"channel": "beta", "publish": "true"}, True, id="beta-stage"),
+        pytest.param("v1.2.3-beta.1", "verify", {"channel": "beta", "publish": ""}, False, id="beta-verify"),
     ],
 )
 def test_compares_archive_and_derives_channel(
@@ -51,8 +48,7 @@ def test_compares_archive_and_derives_channel(
     signed_archive: tuple[Path, str],
     version: str,
     mode: str,
-    channel: str,
-    publish: str,
+    expected: dict[str, str],
     github_output: bool,
 ) -> None:
     archive, digest = signed_archive
@@ -71,7 +67,7 @@ def test_compares_archive_and_derives_channel(
         PATH=f"{release_creator}:{os.environ['PATH']}",
     )
     assert result.returncode == 0, result.stderr
-    assert outputs == {"channel": channel, "publish": publish}
+    assert outputs == expected
     arguments = (tmp_path / "release-creator.args").read_text().splitlines()
     assert arguments[:8] == [
         "marketplace",

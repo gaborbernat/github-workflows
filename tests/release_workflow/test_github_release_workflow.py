@@ -1,49 +1,44 @@
-from __future__ import annotations
-
-from pathlib import Path
-from typing import Any
-
-import yaml
-
-ROOT = Path(__file__).resolve().parents[2]
+import pytest
+from conftest import WORKFLOWS, JsonObject, at, load_yaml, step, steps
 
 
-def _workflow(name: str) -> dict[str, Any]:
-    return yaml.load((ROOT / ".github/workflows" / name).read_text(), Loader=yaml.BaseLoader)
+@pytest.fixture(scope="module")
+def workflow() -> JsonObject:
+    return load_yaml(WORKFLOWS / "github-release.yaml")
 
 
-def _steps(job: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    return {step["name"]: step for step in job["steps"]}
+def test_github_release_publishes_from_a_release_environment_only(workflow: JsonObject) -> None:
+    assert at(workflow, "jobs", "github-release", "environment") == "release"
+    assert at(workflow, "jobs", "github-release", "permissions") == {"contents": "write"}
+    assert at(workflow, "permissions") == {}
 
 
-def test_github_release_publishes_from_a_release_environment_only() -> None:
-    workflow = _workflow("github-release.yaml")
-    job = workflow["jobs"]["github-release"]
+def test_github_release_verifies_pypi_before_publishing(workflow: JsonObject) -> None:
+    names = [item["name"] for item in steps(workflow, "github-release")]
 
-    assert job["environment"] == "release"
-    assert job["permissions"] == {"contents": "write"}
-    assert workflow["permissions"] == {}
-
-
-def test_github_release_verifies_pypi_before_publishing() -> None:
-    steps = _steps(_workflow("github-release.yaml")["jobs"]["github-release"])
-
-    assert list(steps) == [
+    assert names == [
         "🐍 Install uv and Python",
         "📩 Download distributions",
         "📩 Download release notes",
         "🔍 Verify PyPI artifacts",
         "🚀 Publish GitHub release",
     ]
-    assert steps["🔍 Verify PyPI artifacts"]["with"] == {
+
+
+def test_github_release_verifies_the_requested_version(workflow: JsonObject) -> None:
+    verify = step(workflow, "github-release", "🔍 Verify PyPI artifacts")
+
+    assert verify["with"] == {
         "project": "${{ inputs.project }}",
         "version": "${{ inputs.version }}",
         "dist": "dist",
+        "exclude-newer": "${{ inputs.exclude-newer }}",
+        "exclude-newer-package": "${{ inputs.exclude-newer-package }}",
     }
 
 
-def test_github_release_title_prefixes_the_tag() -> None:
-    publish = _steps(_workflow("github-release.yaml")["jobs"]["github-release"])["🚀 Publish GitHub release"]
+def test_github_release_title_prefixes_the_tag(workflow: JsonObject) -> None:
+    publish = step(workflow, "github-release", "🚀 Publish GitHub release")
 
     assert publish["with"] == {
         "tag": "${{ inputs.tag }}",

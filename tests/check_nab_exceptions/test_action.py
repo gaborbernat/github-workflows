@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from pathlib import Path
 
 import pytest
@@ -26,31 +24,28 @@ def test_check_nab_exceptions_action_accepts_dated_exceptions(
     assert (result.returncode, result.stderr) == (0, "")
 
 
-def test_check_nab_exceptions_action_names_undated_package(tmp_path: Path, action_scripts: Path) -> None:
-    (tmp_path / "pyproject.toml").write_text("[tool.nab.packages.sphinx]\nuploaded-prior-to = 2026-10-21\n")
+@pytest.mark.parametrize(
+    ("content", "message"),
+    [
+        pytest.param(
+            "[tool.nab.packages.sphinx]\nuploaded-prior-to = 2026-10-21\n",
+            "pyproject.toml: packages.sphinx uploaded-prior-to exception needs a "
+            "'# expires YYYY-MM-DD' comment directly above it",
+            id="undated",
+        ),
+        pytest.param(
+            "# expires 2000-01-01\n[tool.nab.packages.sphinx]\nuploaded-prior-to = 2026-10-21\n",
+            "pyproject.toml: packages.sphinx uploaded-prior-to exception expired on 2000-01-01; "
+            "remove it or extend its expiry",
+            id="expired",
+        ),
+    ],
+)
+def test_check_nab_exceptions_action_rejects_exception(
+    tmp_path: Path, action_scripts: Path, content: str, message: str
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(content)
 
     result = action(tmp_path, tmp_path / "runner", action_scripts, "check-nab-exceptions", version="")
 
-    assert (result.returncode, result.stderr) == (
-        1,
-        (
-            "::error::pyproject.toml: packages.sphinx uploaded-prior-to exception needs a "
-            "'# expires YYYY-MM-DD' comment directly above it\n"
-        ),
-    )
-
-
-def test_check_nab_exceptions_action_names_expired_package(tmp_path: Path, action_scripts: Path) -> None:
-    (tmp_path / "pyproject.toml").write_text(
-        "# expires 2000-01-01\n[tool.nab.packages.sphinx]\nuploaded-prior-to = 2026-10-21\n"
-    )
-
-    result = action(tmp_path, tmp_path / "runner", action_scripts, "check-nab-exceptions", version="")
-
-    assert (result.returncode, result.stderr) == (
-        1,
-        (
-            "::error::pyproject.toml: packages.sphinx uploaded-prior-to exception expired on 2000-01-01; "
-            "remove it or extend its expiry\n"
-        ),
-    )
+    assert (result.returncode, result.stderr) == (1, f"::error::{message}\n")

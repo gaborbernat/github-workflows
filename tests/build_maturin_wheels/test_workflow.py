@@ -1,48 +1,39 @@
-from __future__ import annotations
-
 import json
-import os
 import re
-import subprocess
 from pathlib import Path
-from typing import Any
 
 import pytest
-import yaml
-
-ROOT = Path(__file__).resolve().parents[2]
-WORKFLOW = ROOT / ".github/workflows/build-maturin-wheels.yaml"
-PINNED = re.compile(r"^(\$/|[\w.-]+/[\w./-]+@[0-9a-f]{40})")
+from conftest import WORKFLOWS, JsonObject, action, at, load_yaml, mapping, step, steps, text
 
 
 @pytest.fixture(scope="module")
-def workflow() -> dict[Any, Any]:
-    return yaml.safe_load(WORKFLOW.read_text())
+def workflow() -> JsonObject:
+    return load_yaml(WORKFLOWS / "build-maturin-wheels.yaml")
 
 
-def test_inputs_have_documented_defaults(workflow: dict[Any, Any]) -> None:
-    inputs = workflow[True]["workflow_call"]["inputs"]
+def test_inputs_have_documented_defaults(workflow: JsonObject) -> None:
+    inputs = mapping(at(workflow, "on", "workflow_call", "inputs"))
 
-    assert inputs["package-path"]["default"] == "."
-    assert inputs["sdist"]["default"] is True
-    assert inputs["release-build"]["default"] is False
-    assert inputs["pre-build-command"]["default"] == ""
-    assert inputs["post-build-command"]["default"] == ""
-    assert inputs["matrix"]["required"] is True
-    assert inputs["package-name"]["required"] is True
-
-
-def test_matrix_comes_from_the_json_input(workflow: dict[Any, Any]) -> None:
-    assert workflow["jobs"]["build"]["strategy"]["matrix"] == {"include": "${{ fromJSON(inputs.matrix) }}"}
-    assert workflow["jobs"]["build"]["runs-on"] == "${{ matrix.os }}"
+    assert at(inputs, "package-path", "default") == "."
+    assert at(inputs, "sdist", "default") == "true"
+    assert at(inputs, "release-build", "default") == "false"
+    assert at(inputs, "pre-build-command", "default") == ""
+    assert at(inputs, "post-build-command", "default") == ""
+    assert at(inputs, "matrix", "required") == "true"
+    assert at(inputs, "package-name", "required") == "true"
 
 
-def test_artifact_names_match_the_callers_names(workflow: dict[Any, Any]) -> None:
+def test_matrix_comes_from_the_json_input(workflow: JsonObject) -> None:
+    assert at(workflow, "jobs", "build", "strategy", "matrix") == {"include": "${{ fromJSON(inputs.matrix) }}"}
+    assert at(workflow, "jobs", "build", "runs-on") == "${{ matrix.os }}"
+
+
+def test_artifact_names_match_the_callers_names(workflow: JsonObject) -> None:
     uploads = {
-        step["name"]: step["with"]["name"]
+        text(item["name"]): text(at(item, "with", "name"))
         for job in ("build", "sdist")
-        for step in workflow["jobs"][job]["steps"]
-        if step.get("uses", "").startswith("actions/upload-artifact@")
+        for item in steps(workflow, job)
+        if text(item.get("uses", "")).startswith("actions/upload-artifact@")
     }
 
     assert uploads == {
@@ -51,73 +42,96 @@ def test_artifact_names_match_the_callers_names(workflow: dict[Any, Any]) -> Non
     }
 
 
-def test_release_mode_disables_sccache_for_tags_or_input(workflow: dict[Any, Any]) -> None:
-    release = workflow["jobs"]["source"]["outputs"]["release"]
-    build = next(step for step in workflow["jobs"]["build"]["steps"] if step["name"] == "🏗️ Build wheels")
+def test_release_mode_disables_sccache_for_tags_or_input(workflow: JsonObject) -> None:
+    assert at(workflow, "jobs", "source", "outputs", "release") == (
+        "${{ inputs.release-build || startsWith(github.ref, 'refs/tags/') }}"
+    )
+    assert at(step(workflow, "build", "🏗️ Build wheels"), "with", "sccache") == (
+        "${{ needs.source.outputs.release != 'true' }}"
+    )
 
-    assert release == "${{ inputs.release-build || startsWith(github.ref, 'refs/tags/') }}"
-    assert build["with"]["sccache"] == "${{ needs.source.outputs.release != 'true' }}"
 
-
-def test_post_build_command_runs_after_maturin_and_before_upload(workflow: dict[Any, Any]) -> None:
-    names = [step["name"] for step in workflow["jobs"]["build"]["steps"]]
+def test_post_build_command_runs_after_maturin_and_before_upload(workflow: JsonObject) -> None:
+    names = [item["name"] for item in steps(workflow, "build")]
 
     assert names.index("🏗️ Build wheels") < names.index("🏗️ Run post-build command") < names.index("📤 Upload wheels")
 
 
-def test_pre_build_command_runs_once_in_the_source_job(workflow: dict[Any, Any]) -> None:
-    steps = [step["name"] for step in workflow["jobs"]["source"]["steps"]]
+def test_pre_build_command_runs_once_in_the_source_job(workflow: JsonObject) -> None:
+    names = [item["name"] for item in steps(workflow, "source")]
 
-    assert "🏷️ Run pre-build command" in steps
-    assert steps.index("🏷️ Run pre-build command") < steps.index("📤 Upload source")
-    assert "🏷️ Run pre-build command" not in [step["name"] for step in workflow["jobs"]["build"]["steps"]]
-
-
-def test_no_job_requests_a_write_token(workflow: dict[Any, Any]) -> None:
-    for name, job in workflow["jobs"].items():
-        assert job.get("permissions", {}) in ({}, {"contents": "read"}), name
-    assert workflow["permissions"] == {}
+    assert "🏷️ Run pre-build command" in names
+    assert names.index("🏷️ Run pre-build command") < names.index("📤 Upload source")
+    assert "🏷️ Run pre-build command" not in [item["name"] for item in steps(workflow, "build")]
 
 
-def test_every_external_action_is_sha_pinned(workflow: dict[Any, Any]) -> None:
-    uses = [step["uses"] for job in workflow["jobs"].values() for step in job["steps"] if "uses" in step]
+def test_no_job_requests_a_write_token(workflow: JsonObject) -> None:
+    for name, job in mapping(workflow["jobs"]).items():
+        assert mapping(job).get("permissions", {}) in ({}, {"contents": "read"}), name
+    assert at(workflow, "permissions") == {}
+
+
+def test_every_external_action_is_sha_pinned(workflow: JsonObject) -> None:
+    uses = [text(item["uses"]) for job in mapping(workflow["jobs"]) for item in steps(workflow, job) if "uses" in item]
+    pinned = re.compile(r"^(\$/|[\w.-]+/[\w./-]+@[0-9a-f]{40})")
 
     assert uses
-    assert all(PINNED.match(value) for value in uses), uses
+    assert all(pinned.match(value) for value in uses), uses
 
 
-def test_every_checkout_keeps_credentials_out_of_the_job(workflow: dict[Any, Any]) -> None:
+def test_every_checkout_keeps_credentials_out_of_the_job(workflow: JsonObject) -> None:
     checkouts = [
-        step
-        for job in workflow["jobs"].values()
-        for step in job["steps"]
-        if step.get("uses", "").startswith("actions/checkout@")
+        item
+        for job in mapping(workflow["jobs"])
+        for item in steps(workflow, job)
+        if text(item.get("uses", "")).startswith("actions/checkout@")
     ]
 
     assert checkouts
-    assert all(step["with"]["persist-credentials"] is False for step in checkouts)
+    assert all(at(item, "with", "persist-credentials") == "false" for item in checkouts)
 
 
-def test_gate_accepts_success_and_skipped_jobs(workflow: dict[Any, Any]) -> None:
-    run = workflow["jobs"]["gate"]["steps"][0]["run"]
+def test_gate_delegates_to_required_checks(workflow: JsonObject) -> None:
+    assert at(workflow, "jobs", "gate") == {
+        "name": "🚦 Build distributions pass",
+        "if": "${{ !cancelled() }}",
+        "needs": ["source", "build", "sdist"],
+        "runs-on": "ubuntu-26.04",
+        "permissions": {},
+        "steps": [
+            {
+                "name": "🚦 Require all needed jobs to pass",
+                "uses": "$/required-checks",
+                "with": {"needs": "${{ toJSON(needs) }}", "allow-skipped": "sdist"},
+            }
+        ],
+    }
 
-    needs = {"source": {"result": "success"}, "build": {"result": "success"}, "sdist": {"result": "skipped"}}
-    assert _gate(run, needs).returncode == 0
 
-
-@pytest.mark.parametrize("result", ["failure", "cancelled"])
-def test_gate_rejects_failed_or_cancelled_jobs(workflow: dict[Any, Any], result: str) -> None:
-    run = workflow["jobs"]["gate"]["steps"][0]["run"]
-
-    needs = {"source": {"result": "success"}, "build": {"result": result}, "sdist": {"result": "success"}}
-    assert _gate(run, needs).returncode != 0
-
-
-def _gate(run: str, needs: dict[Any, Any]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["bash", "-c", run],
-        env=os.environ | {"NEEDS_JSON": json.dumps(needs)},
-        text=True,
-        capture_output=True,
-        check=False,
+@pytest.mark.parametrize(
+    ("results", "accepted"),
+    [
+        pytest.param({"source": "success", "build": "success", "sdist": "success"}, True, id="all-succeeded"),
+        pytest.param({"source": "success", "build": "success", "sdist": "skipped"}, True, id="sdist-skipped"),
+        pytest.param({"source": "success", "build": "success", "sdist": "failure"}, False, id="sdist-failed"),
+        pytest.param({"source": "success", "build": "failure", "sdist": "success"}, False, id="build-failed"),
+        pytest.param({"source": "success", "build": "cancelled", "sdist": "success"}, False, id="build-cancelled"),
+        pytest.param({"source": "success", "build": "skipped", "sdist": "success"}, False, id="build-skipped"),
+    ],
+)
+def test_gate_requires_build_jobs_to_succeed(
+    tmp_path: Path,
+    action_scripts: Path,
+    results: dict[str, str],
+    accepted: bool,
+) -> None:
+    result = action(
+        tmp_path,
+        tmp_path,
+        action_scripts,
+        "required-checks",
+        version="",
+        NEEDS=json.dumps({name: {"result": outcome} for name, outcome in results.items()}),
+        ALLOW_SKIPPED="sdist",
     )
+    assert (result.returncode == 0) is accepted, result.stderr

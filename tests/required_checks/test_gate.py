@@ -1,17 +1,8 @@
-from __future__ import annotations
-
 import json
 from pathlib import Path
 
 import pytest
-import yaml
-from conftest import action
-
-ROOT = Path(__file__).resolve().parents[2]
-
-
-def _needs(results: dict[str, str]) -> str:
-    return json.dumps({name: {"result": result} for name, result in results.items()})
+from conftest import WORKFLOWS, action, at, load_yaml, mapping, steps
 
 
 @pytest.mark.parametrize(
@@ -72,17 +63,22 @@ def test_gate_rejects_allowed_job_missing_from_needs(tmp_path: Path, action_scri
 
 
 def test_gate_is_used_by_ci_and_needs_its_jobs() -> None:
-    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yaml").read_text())
-    gate = workflow["jobs"]["gate"]
-    assert gate["needs"] == ["check", "shell", "test", "type"]
-    assert gate["if"] == "${{ !cancelled() }}"
-    assert gate["steps"][-1]["uses"] == "$/required-checks"
-    assert gate["steps"][-1]["with"] == {"needs": "${{ toJSON(needs) }}"}
+    ci = load_yaml(WORKFLOWS / "ci.yaml")
+    gate = steps(ci, "gate")[-1]
+
+    assert at(ci, "jobs", "gate", "needs") == ["check", "shell", "test", "type"]
+    assert at(ci, "jobs", "gate", "if") == "${{ !cancelled() }}"
+    assert gate["uses"] == "$/required-checks"
+    assert gate["with"] == {"needs": "${{ toJSON(needs) }}"}
 
 
 def test_ci_does_not_repeat_changelog_lock_check() -> None:
-    ci = yaml.safe_load((ROOT / ".github/workflows/ci.yaml").read_text())
-    news = yaml.safe_load((ROOT / ".github/workflows/news.yaml").read_text())
+    assert "release-tools-preview" not in mapping(load_yaml(WORKFLOWS / "ci.yaml")["jobs"])
 
-    assert "release-tools-preview" not in ci["jobs"]
-    assert news["jobs"]["changelog"]["steps"][-1]["uses"] == "$/validate-news"
+
+def test_news_validates_the_changelog_with_validate_news() -> None:
+    assert steps(load_yaml(WORKFLOWS / "news.yaml"), "changelog")[-1]["uses"] == "$/validate-news"
+
+
+def _needs(results: dict[str, str]) -> str:
+    return json.dumps({name: {"result": result} for name, result in results.items()})

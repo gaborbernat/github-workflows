@@ -1,23 +1,13 @@
-from __future__ import annotations
-
 import os
 import subprocess
 from pathlib import Path
-from typing import Any, Final
+from typing import Final
 
 import pytest
-import yaml
+from conftest import WORKFLOWS, JsonObject, at, load_yaml, mapping, step, steps, text
 
-ROOT: Final = Path(__file__).resolve().parents[2]
-# BaseLoader keeps the `on` key a string and every scalar a string, as written in the file.
-WORKFLOW: Final[dict[str, Any]] = yaml.load((ROOT / ".github/workflows/check.yaml").read_text(), Loader=yaml.BaseLoader)
-INPUTS: Final[dict[str, Any]] = WORKFLOW["on"]["workflow_call"]["inputs"]
-TEST: Final[dict[str, Any]] = WORKFLOW["jobs"]["test"]
-GATE: Final[dict[str, Any]] = WORKFLOW["jobs"]["gate"]
-
-
-def _step(name: str) -> dict[str, Any]:
-    return next(step for step in TEST["steps"] if step["name"] == name)
+WORKFLOW: Final[JsonObject] = load_yaml(WORKFLOWS / "check.yaml")
+INPUTS: Final[JsonObject] = mapping(at(WORKFLOW, "on", "workflow_call", "inputs"))
 
 
 @pytest.mark.parametrize(
@@ -34,61 +24,66 @@ def _step(name: str) -> dict[str, Any]:
     ],
 )
 def test_input_defaults(name: str, default: str) -> None:
-    assert INPUTS[name]["default"] == default
+    assert at(INPUTS, name, "default") == default
 
 
 def test_include_input_is_required_json_rows() -> None:
-    assert INPUTS["include"]["required"] == "true"
-    assert TEST["strategy"]["matrix"] == {"include": "${{ fromJSON(inputs.include) }}"}
-    assert TEST["runs-on"] == "${{ matrix.os || inputs.os }}"
+    assert at(INPUTS, "include", "required") == "true"
+    assert at(WORKFLOW, "jobs", "test", "strategy", "matrix") == {"include": "${{ fromJSON(inputs.include) }}"}
+    assert at(WORKFLOW, "jobs", "test", "runs-on") == "${{ matrix.os || inputs.os }}"
 
 
 def test_workflow_grants_no_token_scope_beyond_contents_read() -> None:
-    assert WORKFLOW["permissions"] == {}
-    assert TEST["permissions"] == {"contents": "read"}
+    assert at(WORKFLOW, "permissions") == {}
+    assert at(WORKFLOW, "jobs", "test", "permissions") == {"contents": "read"}
 
 
 def test_checkout_keeps_full_history_without_credentials() -> None:
-    assert _step("📥 Check out repository")["with"] == {"fetch-depth": "0", "persist-credentials": "false"}
+    assert step(WORKFLOW, "test", "📥 Check out repository")["with"] == {
+        "fetch-depth": "0",
+        "persist-credentials": "false",
+    }
 
 
 def test_every_run_block_uses_bash_on_windows_rows() -> None:
-    assert all(step.get("shell") == "bash" for step in TEST["steps"] if "run" in step)
+    assert all(item.get("shell") == "bash" for item in steps(WORKFLOW, "test") if "run" in item)
 
 
 def test_tox_environment_is_built_without_running_tests() -> None:
-    assert _step("📦 Set up test suite")["run"] == 'tox run -vv --notest --skip-missing-interpreters false -e "$MATRIX_ENV"'
+    assert step(WORKFLOW, "test", "📦 Set up test suite")["run"] == (
+        'tox run -vv --notest --skip-missing-interpreters false -e "$MATRIX_ENV"'
+    )
 
 
 def test_test_run_reuses_built_environment_with_inputs() -> None:
-    run = _step("🧪 Run test suite")
-    assert run["run"] == 'tox run --skip-pkg-install -e "$MATRIX_ENV"'
-    assert run["env"]["PYTEST_ADDOPTS"] == "${{ inputs.pytest-addopts }}"
-    assert run["env"]["DIFF_AGAINST"] == "${{ inputs.diff-against }}"
+    suite = step(WORKFLOW, "test", "🧪 Run test suite")
+    assert suite["run"] == 'tox run --skip-pkg-install -e "$MATRIX_ENV"'
+    assert at(suite, "env", "PYTEST_ADDOPTS") == "${{ inputs.pytest-addopts }}"
+    assert at(suite, "env", "DIFF_AGAINST") == "${{ inputs.diff-against }}"
 
 
 def test_python_is_installed_only_for_rows_that_name_one() -> None:
-    step = _step("🐍 Install Python")
-    assert step["if"] == "${{ matrix.python }}"
-    assert step["env"] == {"PYTHON": "${{ matrix.python }}"}
+    install = step(WORKFLOW, "test", "🐍 Install Python")
+    assert install["if"] == "${{ matrix.python }}"
+    assert install["env"] == {"PYTHON": "${{ matrix.python }}"}
 
 
 def test_apt_packages_install_on_linux_only() -> None:
-    step = _step("📦 Install apt packages")
-    assert step["if"] == "${{ inputs.apt-packages != '' && runner.os == 'Linux' }}"
-    assert step["env"] == {"APT_PACKAGES": "${{ inputs.apt-packages }}"}
+    install = step(WORKFLOW, "test", "📦 Install apt packages")
+    assert install["if"] == "${{ inputs.apt-packages != '' && runner.os == 'Linux' }}"
+    assert install["env"] == {"APT_PACKAGES": "${{ inputs.apt-packages }}"}
 
 
 def test_coverage_upload_is_opt_in_and_named_per_job() -> None:
-    step = _step("📤 Upload coverage data")
-    assert step["if"] == "${{ inputs.coverage }}"
-    assert step["with"]["name"] == ".coverage.${{ matrix.os || inputs.os }}.${{ matrix.env }}"
-    assert step["with"]["path"] == ".tox/.coverage.*"
-    assert step["with"]["if-no-files-found"] == "error"
+    upload = step(WORKFLOW, "test", "📤 Upload coverage data")
+    assert upload["if"] == "${{ inputs.coverage }}"
+    assert at(upload, "with", "name") == ".coverage.${{ matrix.os || inputs.os }}.${{ matrix.env }}"
+    assert at(upload, "with", "path") == ".tox/.coverage.*"
+    assert at(upload, "with", "if-no-files-found") == "error"
 
 
 def test_gate_requires_test_through_required_checks() -> None:
-    assert GATE == {
+    assert at(WORKFLOW, "jobs", "gate") == {
         "name": "🚦 Required checks pass",
         "if": "${{ !cancelled() }}",
         "needs": ["test"],
@@ -149,7 +144,7 @@ def test_tox_install_passes_cutoffs_to_uv(
     (stub / "uv").chmod(0o755)
     arguments = tmp_path / "arguments"
     result = subprocess.run(
-        ["bash", "-c", _step("📦 Install tox")["run"]],
+        ["bash", "-c", text(step(WORKFLOW, "test", "📦 Install tox")["run"])],
         env={
             "PATH": f"{stub}{os.pathsep}{os.environ['PATH']}",
             "UV_ARGUMENTS": str(arguments),

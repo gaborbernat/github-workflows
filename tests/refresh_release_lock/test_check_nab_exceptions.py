@@ -1,18 +1,13 @@
-from __future__ import annotations
-
 import subprocess
 import sys
 from pathlib import Path
+from typing import Final
 
 import pytest
 
-_SCRIPT = Path(__file__).resolve().parents[2] / "tools/check_nab_exceptions.py"
-_FUTURE = "2999-01-01"
-_PAST = "2000-01-01"
-
-
-def _check(path: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run([sys.executable, str(_SCRIPT), str(path)], text=True, capture_output=True, check=False)
+_SCRIPT: Final = Path(__file__).resolve().parents[2] / "tools/check_nab_exceptions.py"
+_FUTURE: Final = "2999-01-01"
+_PAST: Final = "2000-01-01"
 
 
 @pytest.mark.parametrize(
@@ -51,7 +46,7 @@ def test_nab_exception_expiry_accepts_dated_exception(tmp_path: Path, filename: 
     path = tmp_path / filename
     path.write_text(content)
 
-    result = _check(path)
+    result = subprocess.run([sys.executable, str(_SCRIPT), str(path)], text=True, capture_output=True, check=False)
 
     assert (result.returncode, result.stderr) == (0, "")
 
@@ -97,7 +92,7 @@ def test_nab_exception_expiry_rejects_undated_or_expired_exception(tmp_path: Pat
     path = tmp_path / "pyproject.toml"
     path.write_text(content)
 
-    result = _check(path)
+    result = subprocess.run([sys.executable, str(_SCRIPT), str(path)], text=True, capture_output=True, check=False)
 
     assert (result.returncode, result.stderr) == (1, f"::error::{path}: {problem}\n")
 
@@ -109,7 +104,7 @@ def test_nab_exception_expiry_reports_each_failing_package(tmp_path: Path) -> No
         f"# expires {_PAST}\n[tool.nab.packages.vcrpy]\nuploaded-prior-to = 2026-10-25\n"
     )
 
-    result = _check(path)
+    result = subprocess.run([sys.executable, str(_SCRIPT), str(path)], text=True, capture_output=True, check=False)
 
     assert (result.returncode, result.stderr) == (
         1,
@@ -122,20 +117,26 @@ def test_nab_exception_expiry_reports_each_failing_package(tmp_path: Path) -> No
 
 
 def test_nab_exception_expiry_rejects_missing_file(tmp_path: Path) -> None:
-    result = _check(tmp_path / "pyproject.toml")
+    path = tmp_path / "pyproject.toml"
 
-    assert result.returncode == 1
-    assert "No such file or directory" in result.stderr
+    result = subprocess.run([sys.executable, str(_SCRIPT), str(path)], text=True, capture_output=True, check=False)
+
+    assert (result.returncode, result.stderr) == (
+        1,
+        f"::error::[Errno 2] No such file or directory: '{path}'\n",
+    )
 
 
 def test_nab_exception_expiry_rejects_invalid_toml(tmp_path: Path) -> None:
     path = tmp_path / "pyproject.toml"
     path.write_text("[tool.nab\n")
 
-    result = _check(path)
+    result = subprocess.run([sys.executable, str(_SCRIPT), str(path)], text=True, capture_output=True, check=False)
 
-    assert result.returncode == 1
-    assert result.stderr.startswith("::error::")
+    assert (result.returncode, result.stderr) == (
+        1,
+        "::error::Expected ']' at the end of a table declaration (at line 1, column 10)\n",
+    )
 
 
 def test_nab_exception_expiry_import_has_no_cli_side_effect() -> None:

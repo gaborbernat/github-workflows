@@ -1,42 +1,46 @@
-from __future__ import annotations
-
 from pathlib import Path
-from typing import Any
+from typing import Final
 
 import pytest
-import yaml
+from conftest import WORKFLOWS, JsonObject, at, load_yaml, mapping, step, steps, text
 
-ROOT = Path(__file__).resolve().parents[2]
-
-
-def _workflow(name: str) -> dict[str, Any]:
-    return yaml.load((ROOT / ".github/workflows" / name).read_text(), Loader=yaml.BaseLoader)
+ROOT: Final = Path(__file__).resolve().parents[2]
 
 
-def _steps(job: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    return {step["name"]: step for step in job["steps"]}
+@pytest.fixture(scope="module")
+def workflow() -> JsonObject:
+    return load_yaml(WORKFLOWS / "release-notes.yaml")
 
 
-def test_release_notes_exposes_inputs_and_artifact_id() -> None:
-    workflow = _workflow("release-notes.yaml")
-    call = workflow["on"]["workflow_call"]
+def test_release_notes_declares_its_inputs(workflow: JsonObject) -> None:
+    inputs = mapping(at(workflow, "on", "workflow_call", "inputs"))
 
-    assert {name: definition.get("required") for name, definition in call["inputs"].items()} == {
+    assert {name: mapping(definition).get("required") for name, definition in inputs.items()} == {
         "tag": "true",
         "changelog": None,
         "artifact-url": None,
         "artifact-label": None,
         "package": None,
+        "exclude-newer": None,
+        "exclude-newer-package": None,
     }
-    assert call["outputs"]["artifact-id"]["value"] == "${{ jobs.notes.outputs.artifact-id }}"
-    assert workflow["permissions"] == {}
-    assert workflow["jobs"]["notes"]["permissions"] == {"contents": "read"}
 
 
-def test_release_notes_render_without_a_separate_previous_tag_step() -> None:
-    steps = _steps(_workflow("release-notes.yaml")["jobs"]["notes"])
+def test_release_notes_exposes_artifact_id(workflow: JsonObject) -> None:
+    assert at(workflow, "on", "workflow_call", "outputs", "artifact-id", "value") == (
+        "${{ jobs.notes.outputs.artifact-id }}"
+    )
 
-    assert list(steps) == [
+
+def test_release_notes_job_reads_contents_only(workflow: JsonObject) -> None:
+    assert at(workflow, "permissions") == {}
+    assert at(workflow, "jobs", "notes", "permissions") == {"contents": "read"}
+
+
+def test_release_notes_render_without_a_separate_previous_tag_step(workflow: JsonObject) -> None:
+    names = [item["name"] for item in steps(workflow, "notes")]
+
+    assert names == [
         "📥 Check out repository",
         "🐍 Install uv and Python",
         "⚙️ Read Towncrier configuration",
@@ -44,13 +48,11 @@ def test_release_notes_render_without_a_separate_previous_tag_step() -> None:
         "📝 Render release notes",
         "📤 Upload release notes",
     ]
-    assert all("select-previous-tag" not in step.get("uses", "") for step in steps.values())
+    assert all("select-previous-tag" not in text(item.get("uses", "")) for item in steps(workflow, "notes"))
 
 
-def test_release_notes_default_changelog_comes_from_towncrier_config() -> None:
-    steps = _steps(_workflow("release-notes.yaml")["jobs"]["notes"])
-
-    assert steps["📝 Render release notes"]["with"] == {
+def test_release_notes_default_changelog_comes_from_towncrier_config(workflow: JsonObject) -> None:
+    assert step(workflow, "notes", "📝 Render release notes")["with"] == {
         "tag": "${{ inputs.tag }}",
         "changelog": "${{ inputs.changelog || steps.towncrier.outputs.changelog }}",
         "artifact-url": "${{ inputs.artifact-url }}",
@@ -59,14 +61,14 @@ def test_release_notes_default_changelog_comes_from_towncrier_config() -> None:
     }
 
 
-def test_release_notes_uploads_artifact_per_run_attempt() -> None:
-    upload = _steps(_workflow("release-notes.yaml")["jobs"]["notes"])["📤 Upload release notes"]
+def test_release_notes_uploads_artifact_per_run_attempt(workflow: JsonObject) -> None:
+    upload = step(workflow, "notes", "📤 Upload release notes")
 
-    assert upload["with"]["name"] == "github-release-notes-${{ github.run_attempt }}"
-    assert upload["with"]["if-no-files-found"] == "error"
+    assert at(upload, "with", "name") == "github-release-notes-${{ github.run_attempt }}"
+    assert at(upload, "with", "if-no-files-found") == "error"
 
 
-@pytest.mark.parametrize("path", sorted((ROOT / ".github/workflows").glob("*.y*ml")), ids=lambda path: path.name)
+@pytest.mark.parametrize("path", sorted(WORKFLOWS.glob("*.y*ml")), ids=lambda path: path.name)
 def test_local_action_references_resolve(path: Path) -> None:
     references = [line.split("uses: $/", 1)[1].strip() for line in path.read_text().splitlines() if "uses: $/" in line]
 

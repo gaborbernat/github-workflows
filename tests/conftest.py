@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import json
 import os
 import re
@@ -11,7 +9,7 @@ import tomllib
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 from textwrap import dedent
-from typing import Final, TypedDict, TypeIs, cast
+from typing import Final, TypeIs
 
 import certifi
 import coverage
@@ -365,18 +363,6 @@ type JsonValue = str | int | float | bool | None | list[JsonValue] | dict[str, J
 type JsonObject = dict[str, JsonValue]
 
 
-def is_json(value: object) -> TypeIs[JsonValue]:
-    if isinstance(value, list):
-        return all(is_json(item) for item in value)
-    if isinstance(value, dict):
-        return is_json_object(value)
-    return value is None or isinstance(value, str | int | float | bool)
-
-
-def is_json_object(value: object) -> TypeIs[JsonObject]:
-    return isinstance(value, dict) and all(isinstance(key, str) and is_json(item) for key, item in value.items())
-
-
 def load_yaml(path: Path) -> JsonObject:
     document = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
     if not is_json_object(document):
@@ -406,36 +392,79 @@ def at(document: JsonObject, *keys: str) -> JsonValue:
     return value
 
 
-def steps(document: JsonObject, job: str) -> list[JsonObject]:
-    value = at(document, "jobs", job, "steps")
+def step_list(value: JsonValue) -> list[JsonObject]:
     if not isinstance(value, list):
-        msg = f"{job} has no step list"
+        msg = f"expected a step list, got {value!r}"
         raise TypeError(msg)
     return [mapping(item) for item in value]
+
+
+def steps(document: JsonObject, job: str) -> list[JsonObject]:
+    return step_list(at(document, "jobs", job, "steps"))
 
 
 def step(document: JsonObject, job: str, name: str) -> JsonObject:
     return next(item for item in steps(document, job) if item.get("name") == name)
 
 
-def workflow_step(
+def workflow_env(workflow: str) -> dict[str, str]:
+    return {key: text(value) for key, value in mapping(load_yaml(WORKFLOWS / workflow).get("env", {})).items()}
+
+
+def workflow_step(workflow: str, job: str, name: str) -> JsonObject:
+    return step(load_yaml(WORKFLOWS / workflow), job, name)
+
+
+def run_workflow_step(
     workflow: str,
     job: str,
     name: str,
+    *,
     cwd: Path,
-    environment: Mapping[str, str],
-) -> subprocess.CompletedProcess[str]:
-    script = text(
-        step(load_yaml(Path(__file__).resolve().parents[1] / ".github/workflows" / workflow), job, name)["run"]
-    )
-    return subprocess.run(
-        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", script],
+    runner_temp: Path,
+    values: Mapping[str, str],
+    env: Mapping[str, str],
+) -> tuple[subprocess.CompletedProcess[str], dict[str, str]]:
+    definition = workflow_step(workflow, job, name)
+    script = runner_temp / "step.sh"
+    script.write_text(text(definition["run"]))
+    output = runner_temp / "output"
+    output.unlink(missing_ok=True)
+    expand = {"runner.temp": str(runner_temp), "github.repository": "tox-dev/fixture", **values}
+    declared = workflow_env(workflow) | {key: text(value) for key, value in mapping(definition.get("env", {})).items()}
+    # An env override replaces the value, so its ${{ }} expression need not resolve.
+    expanded = {
+        variable: re.sub(r"\$\{\{\s*(.+?)\s*\}\}", lambda match: expand[match.group(1)], value)
+        for variable, value in declared.items()
+        if variable not in env
+    }
+    environment = {variable: os.environ[variable] for variable in ("HOME", "LANG", "PATH") if variable in os.environ}
+    environment |= {
+        "RUNNER_TEMP": str(runner_temp),
+        "GITHUB_OUTPUT": str(output),
+        "GITHUB_REPOSITORY": "tox-dev/fixture",
+    }
+    result = subprocess.run(
+        ["bash", "--noprofile", "--norc", "-eo", "pipefail", str(script)],
         cwd=cwd,
-        env=_safe_environment() | dict(environment),
+        env={**environment, **expanded, **env},
         text=True,
         capture_output=True,
         check=False,
     )
+    return result, read_outputs(output)
+
+
+def is_json(value: object) -> TypeIs[JsonValue]:
+    if isinstance(value, list):
+        return all(is_json(item) for item in value)
+    if isinstance(value, dict):
+        return is_json_object(value)
+    return value is None or isinstance(value, str | int | float | bool)
+
+
+def is_json_object(value: object) -> TypeIs[JsonObject]:
+    return isinstance(value, dict) and all(isinstance(key, str) and is_json(item) for key, item in value.items())
 
 
 def run(directory: Path, *command: str) -> subprocess.CompletedProcess[str]:
@@ -565,69 +594,6 @@ def _expression(
     raise ValueError(f"unsupported GitHub step environment: {expression}")  # pragma: no cover - new syntax only
 
 
-Step = TypedDict(
-    "Step",
-    {
-        "id": str,
-        "name": str,
-        "if": str,
-        "run": str,
-        "env": dict[str, str],
-        "uses": str,
-        "with": dict[str, object],
-        "continue-on-error": bool,
-    },
-    total=False,
-)
-
-
-def workflow_step(workflow: str, job: str, name: str) -> Step:
-    steps = cast("list[Step]", yaml.safe_load((WORKFLOWS / workflow).read_text())["jobs"][job]["steps"])
-    return next(step for step in steps if step.get("name") == name)
-
-
-def workflow_env(workflow: str) -> dict[str, str]:
-    return cast("dict[str, str]", yaml.safe_load((WORKFLOWS / workflow).read_text()).get("env", {}))
-
-
-def run_workflow_step(
-    workflow: str,
-    job: str,
-    name: str,
-    *,
-    cwd: Path,
-    runner_temp: Path,
-    values: Mapping[str, str],
-    env: Mapping[str, str] | None = None,
-) -> tuple[subprocess.CompletedProcess[str], dict[str, str]]:
-    """Run one named step's ``run:`` block the way Actions does, expanding ``${{ ... }}`` from ``values``."""
-    step = workflow_step(workflow, job, name)
-    script = runner_temp / "step.sh"
-    script.write_text(step["run"])
-    output = runner_temp / "output"
-    output.unlink(missing_ok=True)
-    expand = {"runner.temp": str(runner_temp), "github.repository": "tox-dev/fixture", **values}
-    step_env = {
-        variable: re.sub(r"\$\{\{\s*(.+?)\s*\}\}", lambda match: expand[match.group(1)], str(value))
-        for variable, value in (workflow_env(workflow) | step.get("env", {})).items()
-    }
-    environment = {name: os.environ[name] for name in ("HOME", "LANG", "PATH") if name in os.environ}
-    environment |= {
-        "RUNNER_TEMP": str(runner_temp),
-        "GITHUB_OUTPUT": str(output),
-        "GITHUB_REPOSITORY": "tox-dev/fixture",
-    }
-    result = subprocess.run(
-        ["bash", "--noprofile", "--norc", "-eo", "pipefail", str(script)],
-        cwd=cwd,
-        env={**environment, **step_env, **(env or {})},
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    return result, read_outputs(output)
-
-
 def read_outputs(path: Path) -> dict[str, str]:
     if not path.exists():
         return {}
@@ -650,14 +616,16 @@ def read_outputs(path: Path) -> dict[str, str]:
 __all__ = [
     "CALLER",
     "WORKFLOWS",
+    "JsonObject",
+    "JsonValue",
     "action",
     "at",
     "load_yaml",
     "mapping",
-    "read_outputs",
     "run",
     "run_workflow_step",
     "step",
+    "step_list",
     "steps",
     "text",
     "workflow_env",
