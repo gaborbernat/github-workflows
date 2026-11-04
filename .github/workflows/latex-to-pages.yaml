@@ -72,10 +72,10 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: |
           case "$EVENT_NAME" in
-            pull_request | pull_request_target | workflow_run | issue_comment | merge_group)
-              echo "::error::writer job refuses $EVENT_NAME callers; call it from push, schedule, workflow_dispatch or release"
-              exit 1
-              ;;
+          pull_request | pull_request_target | workflow_run | issue_comment | merge_group)
+            echo "::error::writer job refuses $EVENT_NAME callers; call it from push, schedule, workflow_dispatch or release"
+            exit 1
+            ;;
           esac
       - name: 📥 Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
