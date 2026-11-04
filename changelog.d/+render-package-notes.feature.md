@@ -1,1 +1,1 @@
-`render-release-notes` takes a `package` input that renders one package section of a shared Markdown changelog.
+Add a `package` input to `render-release-notes` that renders one package section of a shared Markdown changelog.
