@@ -82,7 +82,12 @@ jobs:
         run: |
           set -euo pipefail
           version=$(cat .version)
-          sed -i "s/rev: \".*\"/rev: \"v$version\"/" README.md
+          # keep the quoting style of the README, which may write rev: v1.2.3 or rev: "v1.2.3"
+          sed -E -i "s/^([[:space:]]*rev:[[:space:]]*)(\"?)v?[^\"[:space:]]+\\2/\\1\\2v$version\\2/" README.md
+          if ! grep -Eq "rev:[[:space:]]*\"?v$version\"?$" README.md; then
+            echo "::error::README.md has no rev: line to update to v$version" >&2
+            exit 1
+          fi
       - name: 💅 Format generated files
         if: ${{ steps.generate.outputs.mirrored == 'true' }}
         env:

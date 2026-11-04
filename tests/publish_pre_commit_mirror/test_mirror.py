@@ -382,3 +382,47 @@ def test_different_published_tag_fails(tmp_path: Path, clone: Path, tools: Path)
     result, _ = _commit_mirror(clone, tmp_path / "runner", tools, _ONE_VERSION)
     assert result.returncode == 1
     assert "v1.0.1 is published with a different mirror tree" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("readme", "expected"),
+    [
+        pytest.param('  rev: "v1.0.0"\n', '  rev: "v2.0.0"\n', id="quoted"),
+        pytest.param("    rev: v1.0.0\n", "    rev: v2.0.0\n", id="unquoted"),
+        pytest.param("rev: 1.0.0\n", "rev: v2.0.0\n", id="no-v-prefix"),
+    ],
+)
+def test_readme_rev_keeps_its_quoting(tmp_path: Path, readme: str, expected: str) -> None:
+    (tmp_path / ".version").write_text("2.0.0\n")
+    (tmp_path / "README.md").write_text(readme)
+
+    result, _ = run_workflow_step(
+        _WORKFLOW,
+        "mirror",
+        "📝 Update README with current version",
+        cwd=tmp_path,
+        runner_temp=tmp_path,
+        values={},
+        env={},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "README.md").read_text() == expected
+
+
+def test_readme_without_rev_line_fails(tmp_path: Path) -> None:
+    (tmp_path / ".version").write_text("2.0.0\n")
+    (tmp_path / "README.md").write_text("no hook snippet\n")
+
+    result, _ = run_workflow_step(
+        _WORKFLOW,
+        "mirror",
+        "📝 Update README with current version",
+        cwd=tmp_path,
+        runner_temp=tmp_path,
+        values={},
+        env={},
+    )
+
+    assert result.returncode != 0
+    assert "README.md has no rev: line to update to v2.0.0" in result.stderr

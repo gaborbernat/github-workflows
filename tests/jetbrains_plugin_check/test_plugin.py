@@ -90,6 +90,22 @@ def test_build_ignores_archives_of_other_versions(tmp_path: Path, distributions:
     assert outputs == {"name": "Plugin-1.2.3.zip", "sha256": hashlib.sha256(b"new").hexdigest()}
 
 
+def test_build_finds_the_dev_archive_with_a_build_suffix(tmp_path: Path, distributions: Path) -> None:
+    (tmp_path / "gradle.properties").write_text("pluginVersion=1.2.3-dev\n")
+    (distributions / "Plugin-1.2.3-dev+abc123.zip").write_bytes(b"dev")
+    result, outputs = run_workflow_step(
+        _WORKFLOW,
+        "build",
+        "⚙️ Record unsigned ZIP digest",
+        cwd=tmp_path,
+        runner_temp=tmp_path,
+        values={},
+        env={},
+    )
+    assert result.returncode == 0, result.stderr
+    assert outputs == {"name": "Plugin-1.2.3-dev+abc123.zip", "sha256": hashlib.sha256(b"dev").hexdigest()}
+
+
 def test_plugin_version_input_overrides_committed_version(tmp_path: Path) -> None:
     (tmp_path / "gradle.properties").write_text("pluginVersion=1.2.2\nother=keep\n")
     result, _ = run_workflow_step(
