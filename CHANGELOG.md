@@ -2,6 +2,97 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-6-5-0"></a>
+
+## 6.5.0 (2026-11-04)
+
+<a name="release-6-5-0-added"></a>
+
+### Added
+
+- Add `build-maturin-wheels.yaml`, a reusable workflow that builds a maturin extension's wheels and sdist from a JSON
+  build matrix and uploads them under the artifact names the caller's publisher expects. Wheels use the maturin version
+  from the caller's hash-checked `release-build` group, and the sdist uses its `build` group. Jobs hold read-only
+  permissions. The optional `pre-build-command` runs once before the source upload, and `post-build-command` runs in
+  each wheel job after maturin ([#46](https://github.com/tox-dev/github-workflows/pull/46)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Add `check-nab-exceptions`, a composite action that runs the cutoff exception expiry check on its own, without the
+  lock refresh ([#46](https://github.com/tox-dev/github-workflows/pull/46)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Add `check.yaml`, a reusable workflow that runs a tox matrix for a Python library. Each row sets its Python and
+  runner. The tox install follows the upload cutoff, and Ubuntu packages and coverage data are optional; a caller job
+  merges the coverage data ([#46](https://github.com/tox-dev/github-workflows/pull/46)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Add `codeql.yaml`, a reusable workflow that runs CodeQL for a list of languages, with inputs for ignored paths, query
+  suite, configuration file, and build mode. A caller keeps its own triggers and grants `security-events: write`
+  ([#46](https://github.com/tox-dev/github-workflows/pull/46)) by [@gaborbernat](https://github.com/gaborbernat).
+- Add `github-release.yaml`, a reusable workflow that verifies the PyPI files and publishes the GitHub Release in a job
+  that runs in the caller's `release` environment. It replaces the reconcile and publish steps that callers otherwise
+  copy ([#46](https://github.com/tox-dev/github-workflows/pull/46)) by [@gaborbernat](https://github.com/gaborbernat).
+- Add `jetbrains-plugin-check.yaml`, a reusable workflow that builds the plugin ZIP and records its SHA256, runs
+  `verifyPlugin` for each entry of the `verify-matrix` input, runs the Xvfb UI tests with a configurable timeout for the
+  test IDE, and requires all of them to pass. A release caller passes the tag as `plugin-version` and signs the ZIP from
+  the recorded digest ([#46](https://github.com/tox-dev/github-workflows/pull/46)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Add `latex-to-pages.yaml`, a reusable workflow that builds a LaTeX root file with a commit-pinned `SOURCE_DATE_EPOCH`,
+  publishes the PDF to GitHub Pages from `main`, and waits until Pages serves the built bytes
+  ([#46](https://github.com/tox-dev/github-workflows/pull/46)) by [@gaborbernat](https://github.com/gaborbernat).
+- Add `open-maintenance-pr.yaml`, a reusable workflow that opens or updates a pull request from a read-only job's patch.
+  The patch must touch only the caller's `allowed-paths`, as regular non-executable files or deletions, and the App
+  token is minted only after that check ([#46](https://github.com/tox-dev/github-workflows/pull/46)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Add `prepare-jetbrains-post-release`, a composite action that commits the next `-dev` plugin version after a release
+  without an App token, so `publish-post-release-pr` can open the bump pull request
+  ([#46](https://github.com/tox-dev/github-workflows/pull/46)) by [@gaborbernat](https://github.com/gaborbernat).
+- Add `prepare-release-creator.yaml`, a reusable workflow that prepares releases for repositories that use
+  release-creator. Its assemble job selects the version from the tags and pending fragments, links fragments to their
+  pull requests, runs the caller's changelog command, and uploads a patch. Its push job checks the patch against the
+  caller's allowed paths and pushes the release commit and tag with the release App token
+  ([#46](https://github.com/tox-dev/github-workflows/pull/46)) by [@gaborbernat](https://github.com/gaborbernat).
+- Add `publish-pre-commit-mirror.yaml`, a reusable workflow for pre-commit mirrors that pins the mirror maker and prek,
+  checks formatting with a second run, never moves a published tag, treats an already-published identical version as a
+  no-op, and pushes the branch and every new tag in one atomic push, creating a release for each tag
+  ([#46](https://github.com/tox-dev/github-workflows/pull/46)) by [@gaborbernat](https://github.com/gaborbernat).
+- Add `release-notes.yaml`, a reusable workflow that renders the GitHub Release body in a read-only job and uploads it
+  as an artifact. Callers need not repeat the tool install, previous-tag selection, and upload steps
+  ([#46](https://github.com/tox-dev/github-workflows/pull/46)) by [@gaborbernat](https://github.com/gaborbernat).
+- Add `required-checks`, a composite action that fails unless every job in a `needs` context succeeded. Its
+  `allow-skipped` input names jobs that may end skipped. A gate calls it in place of an inline `jq` expression, and the
+  required check name stays with the caller ([#46](https://github.com/tox-dev/github-workflows/pull/46)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Add `stage-jetbrains-marketplace`, a composite action that checks a signed plugin ZIP against JetBrains Marketplace
+  before upload and again after the version is public, and derives the Marketplace channel from the tag suffix
+  ([#46](https://github.com/tox-dev/github-workflows/pull/46)) by [@gaborbernat](https://github.com/gaborbernat).
+- Add `update-python-dependencies.yaml`, a reusable workflow that bumps Python dependency floors, regenerates
+  `pylock.toml`, and opens one dependency pull request. Bumps wait out a seven-day cooldown by default, and `expedite`
+  lifts it for named packages in one run. With `kind: library`, the `fresh-groups` take their newest release at once,
+  and the other groups wait ([#46](https://github.com/tox-dev/github-workflows/pull/46)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- Add a `package` input to `render-release-notes` that renders one package section of a shared Markdown changelog
+  ([#46](https://github.com/tox-dev/github-workflows/pull/46)) by [@gaborbernat](https://github.com/gaborbernat).
+- Add an `allowed-paths` input to `validate-release-patch`. When it is set, the patch may change only the paths matching
+  those glob patterns, and the Towncrier configuration is no longer read. Without it, the Action checks the changelog
+  and fragment deletions as before ([#46](https://github.com/tox-dev/github-workflows/pull/46)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+
+<a name="release-6-5-0-changes"></a>
+
+### Changes
+
+- The writer jobs in `open-maintenance-pr.yaml`, `prepare-release-creator.yaml`, `prepare-towncrier-release.yaml`,
+  `github-release.yaml`, `publish-pre-commit-mirror.yaml`, and `latex-to-pages.yaml` refuse callers that run on
+  `pull_request`, `pull_request_target`, `workflow_run`, `issue_comment`, or `merge_group`. The job fails with an error
+  before it checks out the repository or uses a token. Callers that ran a writer on those events must trigger it on
+  `push`, `schedule`, `workflow_dispatch`, or `release` instead
+  ([#46](https://github.com/tox-dev/github-workflows/pull/46)) by [@gaborbernat](https://github.com/gaborbernat).
+- `refresh-release-lock` in `check` mode, which `validate-news` runs, fails for a `[tool.nab]` cutoff exception that has
+  no `# expires YYYY-MM-DD` comment directly above it, has a malformed date, or has passed its date. The error names the
+  package. Add the comment above each existing exception ([#46](https://github.com/tox-dev/github-workflows/pull/46)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- `upgrade-release-tools.yaml` checks cutoff exceptions before it refreshes the lock. A scheduled run now fails on an
+  expired or undated exception and names the package, even when no release input changed
+  ([#46](https://github.com/tox-dev/github-workflows/pull/46)) by [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-6-4-0"></a>
 
 ## 6.4.0 (2026-11-03)
