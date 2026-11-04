@@ -39,7 +39,7 @@ runs:
           if [[ -n "$ALLOWED_PATHS" ]]; then
             echo "Release patch path: $status $path"
             matched=false
-            for pattern in "${patterns[@]}"; do
+            for pattern in ${patterns[@]+"${patterns[@]}"}; do
               # shellcheck disable=SC2053 # The patterns are globs, matched on purpose.
               if [[ "$path" == $pattern ]]; then
                 matched=true

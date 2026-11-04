@@ -41,7 +41,7 @@ runs:
         while IFS= read -r path || [[ -n "$path" ]]; do
           trusted_paths+=("$path")
         done < <(printf '%s' "$ALLOWED_PATHS")
-        printf '%s\n' "${trusted_paths[@]}" | LC_ALL=C sort -u >"$RUNNER_TEMP/allowed-paths"
+        printf '%s\n' ${trusted_paths[@]+"${trusted_paths[@]}"} | LC_ALL=C sort -u >"$RUNNER_TEMP/allowed-paths"
         paths=()
         while IFS=$'\t' read -r path blob; do
           case "$path" in
@@ -51,7 +51,8 @@ runs:
             ;;
           esac
           if ! grep -Fqx -- "$path" "$RUNNER_TEMP/allowed-paths"; then
-            echo "::error::prepared path $path is not in the writer's allowed-paths: ${trusted_paths[*]}" >&2
+            echo "::error::prepared path $path is not in the writer's allowed-paths:" \
+              "${trusted_paths[*]+"${trusted_paths[*]}"}" >&2
             exit 1
           fi
           case "$blob" in

@@ -50,7 +50,7 @@ runs:
         groups=()
         while IFS= read -r line; do
           read -ra selected <<<"$line"
-          groups+=("${selected[@]}")
+          groups+=(${selected[@]+"${selected[@]}"})
         done <<<"$DEPENDENCY_GROUPS"
         if ((${#groups[@]})); then
           echo "Selected lock groups: ${groups[*]} (from the groups input), installing into $VENV from pylock.toml"
@@ -82,7 +82,7 @@ runs:
         fi
         digest=$(
           sha256sum "$BUILD_LOCK"
-          printf '%s\n' "$TARGET_PLATFORM" "$TARGETS" "${args[@]}"
+          printf '%s\n' "$TARGET_PLATFORM" "$TARGETS" ${args[@]+"${args[@]}"}
         )
         digest=$(sha256sum <<<"$digest")
         output="$RUNNER_TEMP/build-constraints-${digest%% *}.txt"
@@ -90,7 +90,7 @@ runs:
           echo "Reusing build constraints from an earlier step (same lock and targets): $output"
         else
           uv run --no-project --python "$RUNNER_TEMP/lock-reader" python \
-            "$GITHUB_ACTION_PATH/../tools/build_constraints.py" "${args[@]}" "$output" "$BUILD_LOCK"
+            "$GITHUB_ACTION_PATH/../tools/build_constraints.py" ${args[@]+"${args[@]}"} "$output" "$BUILD_LOCK"
         fi
         echo "path=$output" >>"$GITHUB_OUTPUT"
     - name: 📦 Install selected groups
