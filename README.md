@@ -871,7 +871,8 @@ workflow.
 `release-notes.yaml` takes these inputs and returns one output:
 
 - `tag` **(required)**: release tag, such as `1.2.3` or `pyproject-fmt/1.2.3`.
-- `changelog`: tracked changelog path. Empty reads `filename` from the committed Towncrier configuration.
+- `changelog`: tracked changelog path. Empty reads `filename` from the committed Towncrier configuration, so a
+  repository without one, such as a multi-package workspace, must set it.
 - `artifact-url` and `artifact-label`: passed to `render-release-notes`.
 - `package`: package section of a shared Markdown changelog. The previous tag is then the one before the tag in the same
   package namespace.
@@ -1137,6 +1138,12 @@ with a different title, body, or prerelease flag is updated; a Release with a di
 leaves the draft for a later retry. The Action removes incomplete `starter` assets before retrying. It retries reading
 the release by ID for up to ten seconds after draft creation or asset upload; a mismatch still fails when that window
 ends.
+
+A GitHub API call that fails with a server error or a network error is retried up to three times, with backoff; a 4xx
+fails at once. Draft creation is the exception: a request GitHub had already applied would be sent again and could leave
+a second draft, so that call is not retried. If the publish call fails, the Action reads the release again and succeeds
+when GitHub already published it with the expected assets and notes, which covers a response lost after GitHub applied
+the change.
 
 ## Reconcile a post-release pull request
 

@@ -55,6 +55,19 @@ def _release_requests(server: HTTPServer) -> list[Request]:
     return [request for request, _ in server.log if request.path != _GENERATE_NOTES]
 
 
+def _requests(server: HTTPServer, method: str, path: str) -> list[Request]:
+    return [request for request, _ in server.log if request.method == method and request.path == path]
+
+
+def _expect_draft_for_publish(server: HTTPServer, notes: Path) -> None:
+    prefix = "/api/v3/repos/tox-dev/fixture"
+    server.expect_ordered_request(f"{prefix}/releases", query_string="per_page=100", method="GET").respond_with_json(
+        [_release(notes, draft=True)]
+    )
+    _expect_generated_notes(server)
+    server.expect_ordered_request(f"{prefix}/releases/42", method="GET").respond_with_json(_release(notes, draft=True))
+
+
 def _release_calls(tmp_path: Path) -> list[tuple[str, ...]]:
     path = tmp_path / "release-cli-arguments"
     return (
@@ -802,3 +815,179 @@ def test_new_release_credits_first_time_contributors_above_the_links(
     generate, create = (request.get_json() for request, _ in server.log if request.method == "POST")
     assert generate == {"tag_name": "0.1.0", "target_commitish": commit, "previous_tag_name": "0.0.9"}
     assert create["body"] == credited
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "mimetype"),
+    [
+        pytest.param(502, "<html>Bad Gateway</html>", "text/html", id="html-body"),
+        pytest.param(500, '{"message": "Server Error"}', "application/json", id="json-body"),
+    ],
+)
+def test_server_error_on_generated_notes_is_retried(
+    repository: Path,
+    tmp_path: Path,
+    action_scripts: Path,
+    github_api: tuple[HTTPServer, dict[str, str]],
+    release_cli: dict[str, str],
+    status: int,
+    body: str,
+    mimetype: str,
+) -> None:
+    server, environment = github_api
+    notes, commit = _notes_and_commit(repository, tmp_path)
+    prefix = "/api/v3/repos/tox-dev/fixture"
+    server.expect_ordered_request(f"{prefix}/releases", query_string="per_page=100", method="GET").respond_with_json([])
+    server.expect_ordered_request(_GENERATE_NOTES, method="POST").respond_with_data(
+        body, status=status, mimetype=mimetype
+    )
+    _expect_generated_notes(server)
+    server.expect_ordered_request(f"{prefix}/releases", method="POST").respond_with_json(
+        _release(notes, draft=True), status=201
+    )
+    server.expect_ordered_request(f"{prefix}/releases/42", method="GET").respond_with_json(_release(notes, draft=True))
+    result = _request(repository, tmp_path, action_scripts, notes, commit, environment | release_cli, mode="stage")
+    assert result.returncode == 0, result.stderr
+    assert len(_requests(server, "POST", _GENERATE_NOTES)) == 2
+
+
+def test_client_error_on_generated_notes_is_not_retried(
+    repository: Path,
+    tmp_path: Path,
+    action_scripts: Path,
+    github_api: tuple[HTTPServer, dict[str, str]],
+    release_cli: dict[str, str],
+) -> None:
+    server, environment = github_api
+    notes, commit = _notes_and_commit(repository, tmp_path)
+    prefix = "/api/v3/repos/tox-dev/fixture"
+    server.expect_ordered_request(f"{prefix}/releases", query_string="per_page=100", method="GET").respond_with_json([])
+    server.expect_ordered_request(_GENERATE_NOTES, method="POST").respond_with_json(
+        {"message": "Not Found"}, status=404
+    )
+    result = _request(repository, tmp_path, action_scripts, notes, commit, environment | release_cli, mode="stage")
+    assert result.returncode != 0
+    assert "Not Found (HTTP 404)" in result.stderr
+    assert len(_requests(server, "POST", _GENERATE_NOTES)) == 1
+
+
+def test_draft_creation_is_not_retried(
+    repository: Path,
+    tmp_path: Path,
+    action_scripts: Path,
+    github_api: tuple[HTTPServer, dict[str, str]],
+    release_cli: dict[str, str],
+) -> None:
+    server, environment = github_api
+    notes, commit = _notes_and_commit(repository, tmp_path)
+    prefix = "/api/v3/repos/tox-dev/fixture"
+    server.expect_ordered_request(f"{prefix}/releases", query_string="per_page=100", method="GET").respond_with_json([])
+    _expect_generated_notes(server)
+    server.expect_ordered_request(f"{prefix}/releases", method="POST").respond_with_data(status=502)
+    result = _request(repository, tmp_path, action_scripts, notes, commit, environment | release_cli, mode="stage")
+    assert result.returncode != 0
+    assert len(_requests(server, "POST", f"{prefix}/releases")) == 1
+
+
+def test_server_error_on_publish_is_retried(
+    repository: Path,
+    tmp_path: Path,
+    action_scripts: Path,
+    github_api: tuple[HTTPServer, dict[str, str]],
+    release_cli: dict[str, str],
+) -> None:
+    server, environment = github_api
+    notes, commit = _notes_and_commit(repository, tmp_path)
+    _expect_draft_for_publish(server, notes)
+    prefix = "/api/v3/repos/tox-dev/fixture"
+    server.expect_ordered_request(f"{prefix}/releases/42", method="PATCH").respond_with_data(status=502)
+    server.expect_ordered_request(f"{prefix}/releases/42", method="PATCH").respond_with_json(
+        _release(notes, draft=False)
+    )
+    result = _request(repository, tmp_path, action_scripts, notes, commit, environment | release_cli)
+    assert result.returncode == 0, result.stderr
+    assert [request.method for request in _release_requests(server)] == ["GET", "GET", "PATCH", "PATCH"]
+
+
+def test_failed_publish_is_accepted_when_release_is_published(
+    repository: Path,
+    tmp_path: Path,
+    action_scripts: Path,
+    github_api: tuple[HTTPServer, dict[str, str]],
+    release_cli: dict[str, str],
+) -> None:
+    server, environment = github_api
+    notes, commit = _notes_and_commit(repository, tmp_path)
+    _expect_draft_for_publish(server, notes)
+    prefix = "/api/v3/repos/tox-dev/fixture"
+    for _ in range(3):
+        server.expect_ordered_request(f"{prefix}/releases/42", method="PATCH").respond_with_data(status=502)
+    server.expect_ordered_request(f"{prefix}/releases/42", method="GET").respond_with_json(_release(notes, draft=False))
+    result = _request(repository, tmp_path, action_scripts, notes, commit, environment | release_cli)
+    assert result.returncode == 0, result.stderr
+    assert "already published" in result.stdout
+    assert [request.method for request in _release_requests(server)] == ["GET", "GET", *["PATCH"] * 3, "GET"]
+
+
+@pytest.mark.parametrize(
+    "published",
+    [
+        pytest.param({"body": "Other notes.\n"}, id="notes"),
+        pytest.param(
+            {"assets": [{"name": "stray.zip", "digest": "sha256:" + "0" * 64, "state": "uploaded"}]}, id="asset"
+        ),
+    ],
+)
+def test_failed_publish_is_rejected_when_published_release_differs(
+    repository: Path,
+    tmp_path: Path,
+    action_scripts: Path,
+    github_api: tuple[HTTPServer, dict[str, str]],
+    release_cli: dict[str, str],
+    published: dict[str, str | list[dict[str, str]]],
+) -> None:
+    server, environment = github_api
+    notes, commit = _notes_and_commit(repository, tmp_path)
+    _expect_draft_for_publish(server, notes)
+    prefix = "/api/v3/repos/tox-dev/fixture"
+    for _ in range(3):
+        server.expect_ordered_request(f"{prefix}/releases/42", method="PATCH").respond_with_data(status=502)
+    for _ in range(6):
+        server.expect_ordered_request(f"{prefix}/releases/42", method="GET").respond_with_json(
+            _release(notes, draft=False) | published
+        )
+    result = _request(repository, tmp_path, action_scripts, notes, commit, environment | release_cli)
+    assert result.returncode != 0
+    assert "is not published with the expected assets and notes" in result.stderr
+    assert len(_requests(server, "PATCH", f"{prefix}/releases/42")) == 3
+
+
+@pytest.mark.parametrize(
+    ("status", "attempts"),
+    [pytest.param(502, 3, id="server-error"), pytest.param(422, 1, id="client-error")],
+)
+def test_failed_publish_on_draft_still_draft_fails(
+    repository: Path,
+    tmp_path: Path,
+    action_scripts: Path,
+    github_api: tuple[HTTPServer, dict[str, str]],
+    release_cli: dict[str, str],
+    status: int,
+    attempts: int,
+) -> None:
+    server, environment = github_api
+    notes, commit = _notes_and_commit(repository, tmp_path)
+    _expect_draft_for_publish(server, notes)
+    prefix = "/api/v3/repos/tox-dev/fixture"
+    for _ in range(attempts):
+        server.expect_ordered_request(f"{prefix}/releases/42", method="PATCH").respond_with_json(
+            {"message": "Error"}, status=status
+        )
+    for _ in range(6):
+        server.expect_ordered_request(f"{prefix}/releases/42", method="GET").respond_with_json(
+            _release(notes, draft=True)
+        )
+    result = _request(repository, tmp_path, action_scripts, notes, commit, environment | release_cli)
+    assert result.returncode != 0
+    assert "is not published with the expected assets and notes" in result.stderr
+    assert len(_requests(server, "PATCH", f"{prefix}/releases/42")) == attempts

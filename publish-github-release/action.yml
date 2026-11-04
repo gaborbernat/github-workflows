@@ -57,7 +57,9 @@ runs:
         TAG: ${{ inputs.tag }}
       run: |
         set -euo pipefail
-        gh api --paginate "repos/$GH_REPO/releases?per_page=100" |
+        # shellcheck disable=SC1091 # GitHub supplies this Action path at runtime.
+        source "$GITHUB_ACTION_PATH/retry.sh"
+        gh_api --paginate "repos/$GH_REPO/releases?per_page=100" |
           jq -s --arg tag "$TAG" '[.[][] | select(.tag_name == $tag)]' >"$RUNNER_TEMP/release-existing.json"
         if jq -e 'length > 0' "$RUNNER_TEMP/release-existing.json" >/dev/null; then
           jq -er '.[0].id' "$RUNNER_TEMP/release-existing.json" >"$RUNNER_TEMP/release-id"
@@ -84,6 +86,8 @@ runs:
         NOTES_FILE: ${{ inputs.notes-file }}
       run: |
         set -euo pipefail
+        # shellcheck disable=SC1091 # GitHub supplies this Action path at runtime.
+        source "$GITHUB_ACTION_PATH/retry.sh"
         if jq -e '.[0].draft == false' "$RUNNER_TEMP/release-existing.json" >/dev/null; then
           echo "New Contributors skipped: GitHub Release $TAG is already published"
           cp "$NOTES_FILE" "$RUNNER_TEMP/release-body.md"
@@ -96,7 +100,8 @@ runs:
           request+=(-f "previous_tag_name=$previous")
         fi
         echo "Generated notes range: ${previous:-first release}...$TAG"
-        gh api -X POST "repos/$GH_REPO/releases/generate-notes" "${request[@]}" --jq .body >"$RUNNER_TEMP/generated-notes.md"
+        gh_api -X POST "repos/$GH_REPO/releases/generate-notes" "${request[@]}" --jq .body \
+          >"$RUNNER_TEMP/generated-notes.md"
         python3 "$GITHUB_ACTION_PATH/../tools/new_contributors.py" \
           "$NOTES_FILE" "$RUNNER_TEMP/generated-notes.md" "$RUNNER_TEMP/release-body.md"
     - name: 🚀 Create or update the draft
@@ -109,11 +114,14 @@ runs:
         PRERELEASE: ${{ inputs.prerelease }}
       run: |
         set -euo pipefail
+        # shellcheck disable=SC1091 # GitHub supplies this Action path at runtime.
+        source "$GITHUB_ACTION_PATH/retry.sh"
         if jq -e 'length == 0' "$RUNNER_TEMP/release-existing.json" >/dev/null; then
           jq -n --arg tag "$TAG" --arg commit "$COMMIT" --arg title "$TITLE" \
             --rawfile body "$RUNNER_TEMP/release-body.md" --argjson prerelease "$PRERELEASE" \
             '{tag_name: $tag, target_commitish: $commit, name: $title, body: $body,
               draft: true, prerelease: $prerelease}' >"$RUNNER_TEMP/release-request.json"
+          # Not retried: if GitHub stored the draft before answering 5xx, a second POST could create another.
           gh api -X POST "repos/$GH_REPO/releases" --input "$RUNNER_TEMP/release-request.json" \
             >"$RUNNER_TEMP/release-created.json"
           jq -er '.id | select(type == "number")' "$RUNNER_TEMP/release-created.json" >"$RUNNER_TEMP/release-id"
@@ -123,7 +131,7 @@ runs:
           "$RUNNER_TEMP/release-existing.json" >/dev/null; then
           jq -n --arg title "$TITLE" --rawfile body "$RUNNER_TEMP/release-body.md" --argjson prerelease "$PRERELEASE" \
             '{name: $title, body: $body, prerelease: $prerelease}' >"$RUNNER_TEMP/release-update.json"
-          gh api -X PATCH "repos/$GH_REPO/releases/$(<"$RUNNER_TEMP/release-id")" \
+          gh_api -X PATCH "repos/$GH_REPO/releases/$(<"$RUNNER_TEMP/release-id")" \
             --input "$RUNNER_TEMP/release-update.json" \
             --jq '"GitHub Release \(.tag_name): updated draft \(.id) to the expected title, notes and prerelease flag"'
         elif jq -e '.[0].draft' "$RUNNER_TEMP/release-existing.json" >/dev/null; then
@@ -155,11 +163,11 @@ runs:
           if jq -e '.[0].draft' "$RUNNER_TEMP/release-existing.json" >/dev/null; then
             while IFS= read -r asset_id; do
               echo "Deleting incomplete draft asset $asset_id left by an earlier attempt"
-              gh api -X DELETE "repos/$GH_REPO/releases/assets/$asset_id"
+              gh_api -X DELETE "repos/$GH_REPO/releases/assets/$asset_id"
             done < <(jq -r '.[0].assets[] | select(.state != "uploaded") | .id' "$RUNNER_TEMP/release-existing.json")
           fi
           read_draft() {
-            gh api "repos/$GH_REPO/releases/$release_id" | jq -s . >"$RUNNER_TEMP/release-current.json" &&
+            gh_api "repos/$GH_REPO/releases/$release_id" | jq -s . >"$RUNNER_TEMP/release-current.json" &&
               jq -e --arg phase draft --slurpfile assets "$RUNNER_TEMP/release-assets.json" \
                 -f "$GITHUB_ACTION_PATH/match.jq" "$RUNNER_TEMP/release-current.json" >/dev/null
           }
@@ -185,20 +193,20 @@ runs:
               else
                 for attempt in {1..6}; do
                   if ((attempt > 1)); then
-                    release=$(gh api "repos/$GH_REPO/releases/$release_id")
+                    release=$(gh_api "repos/$GH_REPO/releases/$release_id")
                     asset_ids=$(jq -r --arg name "$name" \
                       '.assets[] | select(.name == $name and .state != "uploaded") | .id' <<<"$release")
                     while IFS= read -r asset_id; do
                       [[ -n "$asset_id" ]] || continue
                       echo "Deleting incomplete upload $asset_id of $name before retrying"
-                      gh api -X DELETE "repos/$GH_REPO/releases/assets/$asset_id"
+                      gh_api -X DELETE "repos/$GH_REPO/releases/assets/$asset_id"
                     done <<<"$asset_ids"
                   fi
                   echo "Asset $name: uploading (attempt $attempt of 6)"
                   if gh release upload "$TAG" "$asset" --repo "$GH_REPO"; then
                     break
                   fi
-                  if gh api "repos/$GH_REPO/releases/$release_id" | jq -e --arg name "$name" \
+                  if gh_api "repos/$GH_REPO/releases/$release_id" | jq -e --arg name "$name" \
                     --slurpfile assets "$RUNNER_TEMP/release-assets.json" '
                     any(.assets[]; .name == $name and .state == "uploaded" and
                       (.digest as $digest | any($assets[0][]; .name == $name and .digest == $digest)))
@@ -229,7 +237,7 @@ runs:
         source "$GITHUB_ACTION_PATH/retry.sh"
         release_id=$(<"$RUNNER_TEMP/release-id")
         read_complete() {
-          gh api "repos/$GH_REPO/releases/$release_id" | jq -s . >"$RUNNER_TEMP/release-complete.json" &&
+          gh_api "repos/$GH_REPO/releases/$release_id" | jq -s . >"$RUNNER_TEMP/release-complete.json" &&
             jq -e --arg phase complete --slurpfile assets "$RUNNER_TEMP/release-assets.json" \
               -f "$GITHUB_ACTION_PATH/match.jq" "$RUNNER_TEMP/release-complete.json" >/dev/null
         }
@@ -244,15 +252,36 @@ runs:
       shell: bash
       env:
         GH_REPO: ${{ github.repository }}
+        TAG: ${{ inputs.tag }}
         MODE: ${{ inputs.mode }}
       run: |
         set -euo pipefail
+        # shellcheck disable=SC1091 # GitHub supplies this Action path at runtime.
+        source "$GITHUB_ACTION_PATH/retry.sh"
         if [[ "$MODE" == stage ]]; then
           echo 'Publish skipped: mode stage leaves the release as a draft'
         elif jq -e '.[0].draft' "$RUNNER_TEMP/release-complete.json" >/dev/null; then
           release_id=$(<"$RUNNER_TEMP/release-id")
-          gh api -X PATCH "repos/$GH_REPO/releases/$release_id" -F draft=false \
-            --jq '"GitHub Release \(.tag_name): published \(.html_url)"'
+          publish_draft() {
+            gh_api -X PATCH "repos/$GH_REPO/releases/$release_id" -F draft=false \
+              --jq '"GitHub Release \(.tag_name): published \(.html_url)"'
+          }
+          read_published() {
+            gh_api "repos/$GH_REPO/releases/$release_id" | jq -s . >"$RUNNER_TEMP/release-published.json" &&
+              jq -e --arg phase complete --slurpfile assets "$RUNNER_TEMP/release-assets.json" \
+                -f "$GITHUB_ACTION_PATH/match.jq" "$RUNNER_TEMP/release-published.json" >/dev/null &&
+              jq -e --rawfile body "$RUNNER_TEMP/release-body.md" '.[0] | .draft == false and .body == $body' \
+                "$RUNNER_TEMP/release-published.json" >/dev/null
+          }
+          # A publish call can fail after GitHub has already published the release, so the state decides.
+          if ! publish_draft; then
+            echo "::warning::publish call for GitHub Release $TAG failed; reading the release to check it" >&2
+            if ! retry read_published; then
+              echo "::error::GitHub Release $TAG is not published with the expected assets and notes" >&2
+              exit 1
+            fi
+            echo "GitHub Release $TAG: already published with the expected assets and notes"
+          fi
         else
           echo 'Publish skipped: the release is already published'
         fi
