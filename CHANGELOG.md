@@ -2,6 +2,23 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-6-5-3"></a>
+
+## 6.5.3 (2026-11-04)
+
+<a name="release-6-5-3-fixed"></a>
+
+### Fixed
+
+- `publish-github-release` retries a GitHub API call that fails without a client error, up to three attempts with
+  backoff. When the publish call fails, the Action reads the release again and succeeds if GitHub already published it
+  with the expected assets and notes, so a lost response no longer fails a release that is live. Draft creation is not
+  retried ([#49](https://github.com/tox-dev/github-workflows/pull/49)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+- `release-notes.yaml` reads the Towncrier configuration only when the `changelog` input is empty, so a repository
+  without `[tool.towncrier]`, such as a multi-package workspace, can render its release notes when it passes `changelog`
+  ([#49](https://github.com/tox-dev/github-workflows/pull/49)) by [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-6-5-2"></a>
 
 ## 6.5.2 (2026-11-04)
