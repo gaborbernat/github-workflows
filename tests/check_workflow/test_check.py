@@ -180,6 +180,13 @@ def test_gate_requires_test_through_required_checks() -> None:
             id="default",
         ),
         pytest.param(
+            "",
+            "",
+            ["tool", "install", "--python-preference", "only-managed", "--python", "3.15"]
+            + ["--exclude-newer", "7 days"],
+            id="empty-tox-install",
+        ),
+        pytest.param(
             "tox --with .",
             "",
             ["tool", "install", "--python-preference", "only-managed", "--python", "3.15"]
