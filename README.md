@@ -132,8 +132,9 @@ jobs:
 re-pinning. Tests install test, type, and documentation tools afresh to detect upstream dependency changes. The updater
 also refreshes a caller's secondary Nab build-matrix lock when `additional-lock` and its matrix inputs are set.
 
-The optional `commit-message`, `pull-request-title`, and `pull-request-body` inputs replace the default text. The
-workflow never updates a committed `uv.lock`. Build constraints are generated from the lock's `build` group at runtime.
+The optional `pull-request-title` and `pull-request-body` inputs replace the default text, and the title is also the
+commit subject. The workflow never updates a committed `uv.lock`. Build constraints are generated from the lock's
+`build` group at runtime.
 
 For a second lock such as `pylock.build.toml`, set `additional-lock`, `additional-matrix-python`,
 `additional-matrix-platforms`, and `additional-matrix-implementations`. `additional-lock-groups` selects dependency
@@ -143,8 +144,8 @@ PR. The writer accepts only those locks. Pass the same `additional-lock` and mat
 workflow. It checks changes to either lock against the project, including a PR that changes only the secondary lock.
 
 `refresh-release-lock` is the read-only half of the updater. In `refresh` mode, it upgrades the full primary lock and
-writes `$RUNNER_TEMP/lock.patch` if a lock changes. In `check` mode, it regenerates the primary lock without upgrading
-and fails if anything other than Nab's recorded command line differs.
+writes `$RUNNER_TEMP/maintenance.patch` if a lock changes. In `check` mode, it regenerates the primary lock without
+upgrading and fails if anything other than Nab's recorded command line differs.
 
 Check mode installs the Nab version that the committed `pylock.toml` records in `[tool.nab] nab-version`, and fails if
 the lock has none, because a newer Nab would rewrite that field in every committed lock. Refresh mode installs the
@@ -218,11 +219,11 @@ jobs:
   `Update Python dependencies`, and no labels.
 
 The workflow installs the locked release tools from the caller's `release-prepare` group, so the caller's `pylock.toml`
-needs that group. It runs `refresh-release-lock` to upgrade the lock with Nab, then `cooled-prek` twice: the first run
-may rewrite files, and the second confirms the result is stable. Put a repository's own formatting, README generation,
-and other steps in its prek hooks. Besides the locked release tools, it installs Nab from PyPI under the seven-day
-cutoff, and `bump-deps-index` under `exclude-newer`, at a release that supports `--exclude-newer-group` and
-`--exclude-newer-package`.
+needs that group. It runs `refresh-release-lock` to upgrade the lock with Nab, then runs `cooled-prek` once. Hooks may
+rewrite files; a hook failure that changes nothing fails the job, and the pull request checks verify the rewritten
+result. Put a repository's own formatting, README generation, and other steps in its prek hooks. Besides the locked
+release tools, it installs Nab from PyPI under the seven-day cutoff, and `bump-deps-index` under `exclude-newer`, at a
+release that supports `--exclude-newer-group` and `--exclude-newer-package`.
 
 **Output:** No named output. **Remote effect:** Through `open-maintenance-pr`, one dependency pull request into `main`,
 or none when nothing changed.
@@ -235,8 +236,8 @@ The caller uploads the patch as an artifact named `maintenance-patch` and passes
 The reusable workflow runs two jobs. `validate` applies the patch to a scratch index and leaves the checkout unchanged,
 then checks that every changed path matches `allowed-paths` and that each change is a regular non-executable file or a
 deletion. `open` is the only job that mints the App token. It runs in the `release-auth` environment, verifies the patch
-digest that `validate` recorded, checks the paths and modes again, commits, and force-pushes `branch` with a lease. It
-then edits the open pull request from `branch` into `base`, or opens one.
+digest that `validate` recorded, commits, and force-pushes `branch` with a lease. It then edits the open pull request
+from `branch` into `base`, or opens one.
 
 ```yaml
 jobs:
