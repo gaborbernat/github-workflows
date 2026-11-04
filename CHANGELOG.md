@@ -2,6 +2,20 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-6-5-2"></a>
+
+## 6.5.2 (2026-11-04)
+
+<a name="release-6-5-2-fixed"></a>
+
+### Fixed
+
+- `jetbrains-plugin-check` finds the plugin ZIP of a development version, whose name carries a `+<build>` suffix
+  ([#48](https://github.com/tox-dev/github-workflows/pull/48)) by [@gaborbernat](https://github.com/gaborbernat).
+- `publish-pre-commit-mirror` updates an unquoted `rev:` in the README and fails when the README has no `rev:` line,
+  instead of leaving the version unchanged ([#48](https://github.com/tox-dev/github-workflows/pull/48)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-6-5-1"></a>
 
 ## 6.5.1 (2026-11-04)
