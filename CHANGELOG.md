@@ -2,6 +2,19 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-6-5-5"></a>
+
+## 6.5.5 (2026-11-04)
+
+<a name="release-6-5-5-fixed"></a>
+
+### Fixed
+
+- A workflow that calls both `update-python-dependencies` and `upgrade-release-tools` no longer fails in
+  `open-maintenance-pr` with `None of the provided artifact IDs were found`. Each reusable now uploads its patch under
+  its own artifact name ([#51](https://github.com/tox-dev/github-workflows/pull/51)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-6-5-4"></a>
 
 ## 6.5.4 (2026-11-04)
