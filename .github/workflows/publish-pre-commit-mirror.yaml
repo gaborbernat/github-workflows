@@ -161,10 +161,10 @@ jobs:
         if: ${{ github.ref == 'refs/heads/main' && steps.commit.outputs.tags != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          TAGS: ${{ steps.commit.outputs.tags }}
+          NEW_TAGS: ${{ steps.commit.outputs.tags }}
         run: |
           set -euo pipefail
-          read -r -a tags <<<"$TAGS"
+          read -r -a tags <<<"$NEW_TAGS"
           refs=()
           for tag in "${tags[@]}"; do refs+=("refs/tags/$tag"); done
           git push --atomic origin HEAD:refs/heads/main "${refs[@]}"
@@ -172,10 +172,10 @@ jobs:
         if: ${{ github.ref == 'refs/heads/main' && steps.commit.outputs.tags != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          TAGS: ${{ steps.commit.outputs.tags }}
+          NEW_TAGS: ${{ steps.commit.outputs.tags }}
         run: |
           set -euo pipefail
-          read -r -a tags <<<"$TAGS"
+          read -r -a tags <<<"$NEW_TAGS"
           for tag in "${tags[@]}"; do
             gh release create "$tag" --generate-notes
           done

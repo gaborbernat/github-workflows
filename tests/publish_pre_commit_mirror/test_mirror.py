@@ -348,8 +348,8 @@ def _remote_refs(origin: Path) -> dict[str, str]:
 def _publish(clone: Path, runner: Path, tools: Path, scenario: _Scenario) -> None:
     result, outputs = _commit_mirror(clone, runner, tools, scenario)
     assert result.returncode == 0, result.stderr
-    _ok(clone, runner, tools, "🚀 Push mirror commits and tags", TAGS=outputs["tags"])
-    _ok(clone, runner, tools, "🎉 Create GitHub releases", TAGS=outputs["tags"])
+    _ok(clone, runner, tools, "🚀 Push mirror commits and tags", NEW_TAGS=outputs["tags"])
+    _ok(clone, runner, tools, "🎉 Create GitHub releases", NEW_TAGS=outputs["tags"])
 
 
 @pytest.mark.parametrize("scenario", _SCENARIOS)
