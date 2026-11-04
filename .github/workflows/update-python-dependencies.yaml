@@ -187,7 +187,8 @@ jobs:
           UV_NO_CONFIG: "1"
         run: |
           set -euo pipefail
-          bump=(uvx --exclude-newer "$EXCLUDE_NEWER")
+          # Temporary: bump-deps-index 1.19.0 is younger than seven days. Delete after 2026-11-11.
+          bump=(uvx --exclude-newer "$EXCLUDE_NEWER" --exclude-newer-package bump-deps-index=2026-11-04T02:21:00Z)
           while IFS= read -r line; do
             if [[ -n "$line" ]]; then
               bump+=(--exclude-newer-package "$line")

@@ -124,7 +124,15 @@ def test_bump_runs_each_group_with_expedite(repository: Path, tmp_path: Path) ->
     assert result.returncode == 0, result.stderr
     result, calls = bump(repository, tmp_path, outputs)
     assert result.returncode == 0, result.stderr
-    prefix = ["--exclude-newer", "7 days", "bump-deps-index>=1.19", "--exclude-newer", outputs["cutoff"]]
+    prefix = [
+        "--exclude-newer",
+        "7 days",
+        "--exclude-newer-package",
+        "bump-deps-index=2026-11-04T02:21:00Z",
+        "bump-deps-index>=1.19",
+        "--exclude-newer",
+        outputs["cutoff"],
+    ]
     assert calls == [
         "\t".join(
             [*prefix, "--exclude-newer-package", "release-creator=false", "--file", "pyproject.toml", "tox.toml"]
@@ -172,7 +180,7 @@ def test_tool_install_takes_the_exclude_newer_inputs(repository: Path, tmp_path:
     )
     assert result.returncode == 0, result.stderr
     assert calls == [
-        "--exclude-newer\t2026-10-01T00:00:00Z\t--exclude-newer-package\tbump-deps-index=2026-11-01T00:00:00Z\tbump-deps-index>=1.19\t--no-exclude-newer\t--file\tpyproject.toml\ttox.toml"
+        "--exclude-newer\t2026-10-01T00:00:00Z\t--exclude-newer-package\tbump-deps-index=2026-11-04T02:21:00Z\t--exclude-newer-package\tbump-deps-index=2026-11-01T00:00:00Z\tbump-deps-index>=1.19\t--no-exclude-newer\t--file\tpyproject.toml\ttox.toml"
     ]
 
 
@@ -186,6 +194,8 @@ def test_library_bump_keeps_fresh_groups_fresh(repository: Path, tmp_path: Path)
             [
                 "--exclude-newer",
                 "7 days",
+                "--exclude-newer-package",
+                "bump-deps-index=2026-11-04T02:21:00Z",
                 "bump-deps-index>=1.19",
                 "--exclude-newer",
                 outputs["cutoff"],
