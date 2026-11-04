@@ -73,7 +73,8 @@ jobs:
           set -euo pipefail
           version=$(sed -n 's/^pluginVersion=//p' gradle.properties)
           shopt -s nullglob
-          archives=(build/distributions/*-"$version".zip)
+          # a development version carries a +<build> suffix in the archive name, such as 1.2.3-dev+abc123
+          archives=(build/distributions/*-"$version".zip build/distributions/*-"$version"+*.zip)
           if ((${#archives[@]} != 1)); then
             echo "::error::expected one plugin ZIP for version $version, found ${#archives[@]}" >&2
             exit 1
