@@ -2,6 +2,18 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-6-5-6"></a>
+
+## 6.5.6 (2026-11-05)
+
+<a name="release-6-5-6-fixed"></a>
+
+### Fixed
+
+- Maintenance pull requests are no longer opened when a refreshed Nab lock differs from the committed one only in its
+  `created-at` timestamp ([#52](https://github.com/tox-dev/github-workflows/pull/52)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-6-5-5"></a>
 
 ## 6.5.5 (2026-11-04)
