@@ -2,6 +2,18 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-6-6-0"></a>
+
+## 6.6.0 (2026-11-06)
+
+<a name="release-6-6-0-added"></a>
+
+### Added
+
+- `prepare-towncrier-release` and `prepare-release-creator` take a `dry-run` input that assembles the release and skips
+  the push, so a pull request check fails when merging it would break the next release
+  ([#53](https://github.com/tox-dev/github-workflows/pull/53)) by [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-6-5-6"></a>
 
 ## 6.5.6 (2026-11-05)
