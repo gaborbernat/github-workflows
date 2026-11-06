@@ -2,6 +2,27 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-6-7-0"></a>
+
+## 6.7.0 (2026-11-06)
+
+<a name="release-6-7-0-added"></a>
+
+### Added
+
+- `cooled-hooks.yaml` runs every prek hook over the tree with environments built under the seven-day cutoff, so a pull
+  request fails when a hook would break the scheduled maintenance pull requests or release preparation
+  ([#57](https://github.com/tox-dev/github-workflows/pull/57)) by [@gaborbernat](https://github.com/gaborbernat).
+
+<a name="release-6-7-0-documentation"></a>
+
+### Documentation
+
+- Split the README into a catalog of every workflow and Action, a quick start with the typical caller files, and a
+  pinning policy, with reference pages under `docs/` per area, a diagram of the release flow, and a troubleshooting page
+  keyed by error messages. Inputs, defaults, outputs and permissions now match the workflow and Action definitions
+  ([#54](https://github.com/tox-dev/github-workflows/pull/54)) by [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-6-6-1"></a>
 
 ## 6.6.1 (2026-11-06)
