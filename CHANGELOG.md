@@ -2,6 +2,21 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-6-7-1"></a>
+
+## 6.7.1 (2026-11-06)
+
+<a name="release-6-7-1-fixed"></a>
+
+### Fixed
+
+- The `build` and `sdist` jobs of `build-maturin-wheels` no longer print setup-uv's "Empty workdir detected" warning:
+  they set up uv while the source still downloads, as `github-release` already allowed for
+  ([#56](https://github.com/tox-dev/github-workflows/pull/56)) by [@gaborbernat](https://github.com/gaborbernat).
+- `cooled-prek` builds hook environments under the seven-day cutoff, then runs the hooks with the caller's environment,
+  so a system hook that calls `uv run` resolves the project from its own lock instead of under the cutoff
+  ([#58](https://github.com/tox-dev/github-workflows/pull/58)) by [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-6-7-0"></a>
 
 ## 6.7.0 (2026-11-06)
