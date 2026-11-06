@@ -2,6 +2,18 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-6-6-1"></a>
+
+## 6.6.1 (2026-11-06)
+
+<a name="release-6-6-1-performance"></a>
+
+### Performance
+
+- `prepare-towncrier-release` and `prepare-release-creator` install only the changelog formatter's hook instead of every
+  hook, so release preparation and its pull request dry run finish faster, and a hook the release never runs cannot fail
+  it ([#55](https://github.com/tox-dev/github-workflows/pull/55)) by [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-6-6-0"></a>
 
 ## 6.6.0 (2026-11-06)
