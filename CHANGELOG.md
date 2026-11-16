@@ -2,6 +2,36 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-6-8-3"></a>
+
+## 6.8.3 (2026-11-16)
+
+<a name="release-6-8-3-changes"></a>
+
+### Changes
+
+- The `upgrade-release-tools.yaml` pull request title now defaults to `🔧 build(deps): refresh project lock`, matching
+  its body: the run refreshes the whole project lock, not only the release tools
+  ([#72](https://github.com/tox-dev/github-workflows/pull/72)) by [@gaborbernat](https://github.com/gaborbernat).
+
+<a name="release-6-8-3-fixed"></a>
+
+### Fixed
+
+- `upgrade-release-tools.yaml` no longer fails on an expired cutoff exception that its own refresh makes redundant: it
+  deletes that exception in the refresh pull request, keeps the refreshed lock's `created-at`, and then fails only on an
+  undated exception or an expired one the new lock still needs. `refresh-release-lock` gains `drop-redundant-exceptions`
+  for this ([#69](https://github.com/tox-dev/github-workflows/pull/69)) by
+  [@gaborbernat](https://github.com/gaborbernat).
+
+<a name="release-6-8-3-documentation"></a>
+
+### Documentation
+
+- Explain that a cutoff exception stays needed until a refresh re-anchors the lock, how to pick its expiry date, and how
+  to fix the `Invalid input, commit-message is not defined in the referenced workflow` startup failure
+  ([#69](https://github.com/tox-dev/github-workflows/pull/69)) by [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-6-8-2"></a>
 
 ## 6.8.2 (2026-11-12)
