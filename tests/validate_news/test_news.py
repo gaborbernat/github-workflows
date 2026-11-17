@@ -477,3 +477,36 @@ def test_validate_news_skips_labels_set_while_opening(
         **_current_labels(github_api, "false"),
     )
     assert (result.returncode, "add a changelog fragment" in result.stderr) == ((1, True) if checked else (0, False))
+
+
+@pytest.mark.parametrize(
+    ("event", "state", "checked"),
+    [
+        pytest.param("labeled", "closed", False, id="labeled-after-merge"),
+        pytest.param("unlabeled", "closed", False, id="unlabeled-after-close"),
+        pytest.param("labeled", "open", True, id="labeled-while-open"),
+    ],
+)
+def test_validate_news_skips_labels_changed_on_a_closed_pull_request(
+    repository: Path,
+    tmp_path: Path,
+    action_scripts: Path,
+    event: str,
+    state: str,
+    checked: bool,
+    github_api: tuple[HTTPServer, dict[str, str]],
+) -> None:
+    result = action(
+        repository,
+        tmp_path,
+        action_scripts,
+        "validate-news",
+        version="0.2.0",
+        BASE_REF="main",
+        BOT_AUTHOR="false",
+        EVENT_ACTION=event,
+        PULL_STATE=state,
+        UPDATED_AT="2026-01-02T00:00:00Z",
+        **_current_labels(github_api, "false"),
+    )
+    assert (result.returncode, "add a changelog fragment" in result.stderr) == ((1, True) if checked else (0, False))
