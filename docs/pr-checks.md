@@ -222,6 +222,9 @@ Requirements and pitfalls:
   the pull request has now. The job needs `pull-requests: read`. It adds no labels and writes nothing to GitHub.
 - Opening a pull request with labels, as `gh pr create --label` does, fires `labeled` a moment after `opened`. A label
   event within a minute of opening passes at once, since the run for `opened` reads the labels when it checks.
+- A label event on a closed or merged pull request passes at once. After a merge the head is already on the base branch,
+  so the fragment check would find no fragment to count; a closed pull request is checked again by the `reopened` run,
+  so keep `reopened` in the trigger types.
 - Do not cancel runs in progress with a `concurrency` group: the cancelled run shows as a failed check while the other
   passes.
 

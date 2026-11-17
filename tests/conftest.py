@@ -587,6 +587,8 @@ def _expression(
         return environment.get("PULL_NUMBER", "7")
     if expression == "github.event.action":
         return environment.get("EVENT_ACTION", "opened")
+    if expression == "github.event.pull_request.state":
+        return environment.get("PULL_STATE", "open")
     if expression == "github.event.pull_request.created_at":
         return environment.get("CREATED_AT", "2026-01-01T00:00:00Z")
     if expression == "github.event.pull_request.updated_at":
