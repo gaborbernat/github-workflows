@@ -2,6 +2,18 @@
 
 <!-- towncrier release notes start -->
 
+<a name="release-6-8-4"></a>
+
+## 6.8.4 (2026-11-17)
+
+<a name="release-6-8-4-fixed"></a>
+
+### Fixed
+
+- `validate-news` no longer fails when a label changes on a merged or closed pull request, where the merged head is
+  already on the base branch and no fragment differs from the merge base
+  ([#75](https://github.com/tox-dev/github-workflows/pull/75)) by [@gaborbernat](https://github.com/gaborbernat).
+
 <a name="release-6-8-3"></a>
 
 ## 6.8.3 (2026-11-16)
